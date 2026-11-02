@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>English</string>
+	<key>CFBundleExecutable</key>
+	<string>IkonoskopCardReader</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.ikonoskop.community.CardReader</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>IkonoskopCardReader</string>
+	<key>CFBundlePackageType</key>
+	<string>KEXT</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.2.2</string>
+	<key>CFBundleSignature</key>
+	<string>????</string>
+	<key>CFBundleSupportedPlatforms</key>
+	<array>
+		<string>MacOSX</string>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1.2.2</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.3</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Community arm64e port of the Ikonoskop A-Cam dII Express Card Reader driver v1.2</string>
+	<key>IOKitPersonalities</key>
+	<dict>
+		<key>CardReader</key>
+		<dict>
+			<key>CFBundleIdentifier</key>
+			<string>org.ikonoskop.community.CardReader</string>
+			<key>IOClass</key>
+			<string>org_ikonoskop_community_CardReader</string>
+			<key>IOMatchCategory</key>
+			<string>org_ikonoskop_community_CardReader</string>
+			<key>IOPCIMatch</key>
+			<string>0x000710EE</string>
+			<key>IOPCITunnelCompatible</key>
+			<true/>
+			<key>IOProviderClass</key>
+			<string>IOPCIDevice</string>
+			<key>IOUserClientClass</key>
+			<string>org_ikonoskop_community_CardReaderUserClient</string>
+			<key>IKDMASegmentBytes</key>
+			<integer>4096</integer>
+		</dict>
+	</dict>
+	<key>OSBundleLibraries</key>
+	<dict>
+		<key>com.apple.iokit.IOPCIFamily</key>
+		<string>2.9</string>
+		<key>com.apple.iokit.IOStorageFamily</key>
+		<string>2.1</string>
+		<key>com.apple.kpi.iokit</key>
+		<string>22.0</string>
+		<key>com.apple.kpi.libkern</key>
+		<string>22.0</string>
+		<key>com.apple.kpi.mach</key>
+		<string>22.0</string>
+	</dict>
+</dict>
+</plist>

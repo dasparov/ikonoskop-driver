@@ -1,0 +1,13 @@
+kext/build/
+tools/ikctl
+test/ik_harness
+test/libiktest.dylib
+test/.venv/
+*.o
+*.dSYM/
+.DS_Store
+dist/
+# Ikonoskop's original driver and its decompile: local analysis only, never published.
+reference/
+# Local session notes.
+HANDOVER.md
