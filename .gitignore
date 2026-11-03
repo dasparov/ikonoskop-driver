@@ -3,11 +3,16 @@ tools/ikctl
 test/ik_harness
 test/libiktest.dylib
 test/.venv/
+pipeline/build/
 *.o
 *.dSYM/
 .DS_Store
 dist/
-# Ikonoskop's original driver and its decompile: local analysis only, never published.
+# Local working files (analysis scratch, baselines, logs).
+work/
+# Ikonoskop's original driver and its decompile: kept outside the repo, never published.
+# Ignored here in case a copy lands back in the tree.
 reference/
-# Local session notes.
+# Private notes: session handover and audits.
 HANDOVER.md
+AUDIT-*.md
