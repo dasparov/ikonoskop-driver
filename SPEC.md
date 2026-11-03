@@ -133,7 +133,8 @@ Each phase ends with a **gate**: tests that must pass before moving on.
 - Take table: reading the EEPROM needs `sudo` (the driver lets only root do it): `--eeprom <file>` or `--read-eeprom`; the app asks for the password with the standard macOS dialog. Without it, the report says PROBLEMS FOUND, because the check was not done.
 - Kernel log: read with `log show` after the copy (no root needed). Errors of the driver session that served the card mark the affected take, or the card, FAILED. A driver restart during the copy (reader reconnected) is a problem too.
 - Tests (`make pipeline-check`): fixture cards built from the camera's real header templates. A corrupted copy, an unstable second read, duplicate first frames, take-table differences, driver-log errors and an existing destination are all caught.
-- [ ] Real run on the test card: waits for the card (being used for the clap take) and the EEPROM dump.
+- **Real card, read errors:** on ACAM 102 (take AC102008, 420 frames) the card returns slightly different data for about one frame in six when it is read twice. That's about 2 random bytes per frame, flipping both ways, never at the same place twice: random read errors of the flash or the reader, not data stored on the card. So verification now reads such a frame again until two reads match exactly, and keeps that version; a copy made from a bad read is replaced. Every re-read comes from the flash, not from the driver's 8-frame cache. Result: 420 of 420 frames verified, 72 read again, 163 MB/s. A frame fails only if 8 reads never match twice. [INFERENCE] Copies made by simply dragging in Finder read each frame once, so they can carry these errors; the Desktop copies from 2026-11-01 probably contain some. Whether the errors come from the card's flash, the reader or the Thunderbolt adapter is unknown; a test with another adapter would tell.
+- [ ] Full run on the test card: waits for the EEPROM dump (your password) and, to include it, the clap take.
 
 ### Phase 2 — Find the audio
 
@@ -254,6 +255,13 @@ If I get a colour chart later, add a chart-based profile as option C in the same
 - A small SwiftUI Mac app over the same code: shows the mounted card and its takes, lets me choose a destination and outputs, has one **Process card** button, a progress bar, and shows the report at the end.
 
 **Gate:** one card goes to verified copies, clean DNGs, WAVs and ProRes in one click; the ProRes opens in Resolve and Final Cut with sound in sync.
+
+#### Phase 6 results (2026-11-03)
+
+- [x] `acam prores` (also an option of `acam offload` and the app): ProRes 4444 XQ through AVFoundation, 2048×1092. Pictures come from the clean DNGs through Apple's RAW engine (Core Image) with the DNG's own matrices. ACEScct: a scene-linear ACEScg render plus the ACEScct curve. Rec.709: Core Image's standard tone curve, tagged BT.709. The WAV goes in unchanged, and a timecode track starts at the take's first timecode.
+- Evidence on take AC000001 (623 frames): both movies are ProRes 4444 XQ, 24 fps, 623 frames; the sound is byte-identical to the WAV; picture and sound lengths differ by 0.15 ms; the timecode is 01:25:16:23. Speed on the M1 Pro: 53–80 frames/s (ACEScct), 99–129 frames/s (Rec.709), 2–5 times real time. Notes: `work/prores/notes.md`.
+- [x] The ACam app (`make app`, then open `pipeline/build/ACam.app`): it shows the mounted card and its takes, lets you choose the destination, outputs and colour profile, and has one **Process card** button, a progress bar and the report at the end. It reads the card in the background, and asks for your password for the take table with the normal macOS dialog. The first time, macOS asks whether ACam may access files on a removable volume: allow it. Screenshot: `work/phase6/app_card.png`.
+- [ ] Gate: a one-click run on a card and the Resolve / Final Cut check (yours).
 
 ### Phase 7 — Future-proofing (later, separate decision)
 

@@ -150,13 +150,37 @@ Changes from Ikonoskop's v1.2 besides the Apple silicon port:
 - Copying several files at once (as Finder does) was slow, 26 MB/s in testing, because the driver cached only one frame and
   re-read it from flash for every request. It now caches eight.
 
+## Offloading a card: `acam` and the ACam app
+
+`pipeline/` holds a tool that turns a mounted card into verified, ready-to-edit footage. It only reads the card.
+
+| Step | What you get |
+|---|---|
+| Verified copy | `<card>/<take>/frames/`: every frame, read twice from the card and once from the copy, compared with xxHash64. Frames the card returns differently are read again until two reads match. An ASC MHL checksum history per take (`<take>/ascmhl/`) and `REPORT.md`, ending with ALL VERIFIED or PROBLEMS FOUND |
+| Audio | `<take>/<take>_Audio.wav`: the camera's 48 kHz 16-bit stereo sound, which is stored inside each frame, with the start timecode (BWF) |
+| Clean DNGs | `<take>/clean/`: Make and Model, valid colour tags, lossless compression (about half the size), pixel-identical to the originals |
+| ProRes (optional) | `<card>/prores/`: ProRes 4444 XQ, ACEScct log or Rec.709, with sound and timecode |
+
+On the command line (build it with `make pipeline`):
+
+```sh
+sudo tools/ikctl eeprom 0 0x2000 > eeprom.txt     # the card's take table, checked against the copies
+pipeline/build/acam offload --source "/Volumes/ACAM 000" --dest /Volumes/Backup --eeprom eeprom.txt --prores both
+```
+
+`--profile kai02150-ir665` gives the clean DNGs a colour profile built from the sensor's published data instead of the factory
+matrices (`pipeline/colour/`). Or build the Mac app with `make app`, open `pipeline/build/ACam.app`, pick the card and a
+destination, and press **Process card**.
+
 ## Building and testing
 
 ```sh
-make            # driver and tools/ikctl
-make check      # tests, then driver checks
-make release    # make check, then dist/IkonoskopCardReader-<version>.zip
-make pipeline   # the acam card tool in pipeline/ (in development)
+make                 # driver and tools/ikctl
+make check           # tests, then driver checks
+make release         # make check, then dist/IkonoskopCardReader-<version>.zip
+make pipeline        # the acam tool (pipeline/build/acam)
+make pipeline-check  # its tests
+make app             # the ACam Mac app (pipeline/build/ACam.app)
 ```
 
 The file system tests create and mount disk images under `/tmp`. The differential test runs Ikonoskop's original x86_64 driver
