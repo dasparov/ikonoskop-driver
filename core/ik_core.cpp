@@ -8,6 +8,7 @@
 //
 // Kernel-safe: no STL, exceptions, RTTI or floating point; all tables live on the heap.
 #include "ik_core.h"
+#include "ik_dng_templates.h"
 
 #include <string.h>
 
@@ -16,8 +17,6 @@ extern "C" int snprintf(char *str, size_t size, const char *format, ...);
 namespace ik {
 
 namespace {
-
-#include "ik_dng_templates.inc"
 
 // ---- Volume geometry (init_fat32 BPB, fetch_sectors LBA map) -------------------------------
 const uint32_t kSectorBytes = 0x200;
@@ -393,14 +392,14 @@ void createDngHeader(const State *s, uint32_t sensorType, uint32_t take, uint8_t
     const uint8_t *tpl;
     uint32_t len, rateOff, tcOff, reelOff;
     if (sensorType == 0xe) {
-        tpl = kDngHeaderBw;
-        len = sizeof(kDngHeaderBw);
+        tpl = dng::kMonochrome.bytes;
+        len = sizeof(dng::kMonochrome.bytes);
         rateOff = 0x152;
         tcOff = 0x162;
         reelOff = 0x172;
     } else {
-        tpl = eepromWhiteBalance(s, take) ? kDngHeaderTungsten : kDngHeaderDaylight;
-        len = sizeof(kDngHeaderDaylight);
+        tpl = eepromWhiteBalance(s, take) ? dng::kTungsten.bytes : dng::kDaylight.bytes;
+        len = sizeof(dng::kDaylight.bytes);
         rateOff = 0x25a;
         tcOff = 0x26a;
         reelOff = 0x27a;

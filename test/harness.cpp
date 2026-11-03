@@ -1,11 +1,14 @@
 // harness.cpp — exercises ik::VirtualCard against MockHw.
 //
-//   ik_harness dump <image>        build the virtual disk, write it as a sparse raw image and
-//                                  self-check random access, DMA caching and error paths
+//   ik_harness dump <image>        check the DNG header templates, build the virtual disk, write
+//                                  it as a sparse raw image and self-check random access, DMA
+//                                  caching and error paths
 //   ik_harness verify <mountpoint> check the mounted volume: tree, names, sizes, DNG/TIFF
 //                                  structure, header fields and raw payload bytes
 #include "mock_hw.h"
+#include "../core/ik_dng_templates.h"
 
+#include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -76,9 +79,45 @@ uint64_t nextRand() {
     return rng;
 }
 
+// ---- DNG header templates ------------------------------------------------------------------
+
+// core/ik_dng_templates.h must reproduce the three header templates of Ikonoskop's v1.2 driver
+// byte for byte: SHA-256 of its __DATA templates at 0xe040, 0xe1e0 and 0xe480.
+void checkDngTemplates() {
+    struct Expect {
+        const char *name;
+        const uint8_t *bytes;
+        size_t len;
+        const char *sha256;
+    };
+    const Expect expect[] = {
+        {"monochrome", ik::dng::kMonochrome.bytes, sizeof(ik::dng::kMonochrome.bytes),
+         "35b87e01dbff45e8ffb8a2fb7b27315dc73ff4d3d3fab3a12cfc98df82d276c2"},
+        {"tungsten", ik::dng::kTungsten.bytes, sizeof(ik::dng::kTungsten.bytes),
+         "118e7fe91a4bd8f3f13137684f149b5a72515fdd846ad79732448b5cc63874b5"},
+        {"daylight", ik::dng::kDaylight.bytes, sizeof(ik::dng::kDaylight.bytes),
+         "d4b5c50c99757ae139707c7c2a738203fe4bf0ecd6f54887967c913d962e611b"},
+    };
+    const int before = g_failures;
+    for (const Expect &e : expect) {
+        uint8_t digest[CC_SHA256_DIGEST_LENGTH];
+        CC_SHA256(e.bytes, (CC_LONG)e.len, digest);
+        char hex[2 * CC_SHA256_DIGEST_LENGTH + 1];
+        for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
+            snprintf(hex + 2 * i, 3, "%02x", digest[i]);
+        }
+        CHECK(strcmp(hex, e.sha256) == 0, "%s DNG header template: SHA-256 %s, want %s", e.name, hex,
+              e.sha256);
+    }
+    if (g_failures == before) {
+        printf("DNG header templates: SHA-256 identical to the original driver's\n");
+    }
+}
+
 // ---- dump ---------------------------------------------------------------------------------
 
 int cmdDump(const Scenario &sc, const char *path) {
+    checkDngTemplates();
     MockHw hw(sc);
     ik::VirtualCard card;
     if (card.init(&hw) != 0) {
