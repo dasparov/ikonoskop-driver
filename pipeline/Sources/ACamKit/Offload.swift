@@ -1,6 +1,6 @@
-// acam offload: copy every take of a mounted card into <destination>/<card>/<take>/frames/, verify
-// every copy with xxHash64, check the take table, the driver log and the first frames, then write
-// ASC MHL manifests and REPORT.md.
+// Verified offload: copy every take of a mounted card into <destination>/<card>/<take>/frames/,
+// verify every copy with xxHash64, check the take table, the driver log and the first frames, and
+// write an ASC MHL manifest per verified take. CardJob adds the later steps and REPORT.md.
 //
 // Verification: each source file is hashed while it is copied, read a second time after every
 // take has been copied (the driver's 8-frame cache and the file cache are long evicted by then),
@@ -149,8 +149,6 @@ final class Offload {
             }
         }
         result.finished = Date()
-        try Data(OffloadReport.markdown(result).utf8)
-            .write(to: cardFolder.appendingPathComponent("REPORT.md"), options: .withoutOverwriting)
         return result
     }
 

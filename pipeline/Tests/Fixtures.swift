@@ -32,22 +32,20 @@ enum Fixture {
         return root
     }
 
-    /// A 0x336000-byte frame file: TIFF header padded to 4 KiB, then pseudo-random data.
-    static func frame(seed: UInt64, fps: Int, timecode: Timecode, reel: String) -> Data {
-        var header = TIFFWriter.header(fields: [
-            .long(DNGTag.imageWidth, [2048]),
-            .long(DNGTag.imageLength, [1092]),
-            .short(DNGTag.bitsPerSample, [12]),
-            .short(DNGTag.compression, [1]),
-            .short(DNGTag.photometricInterpretation, [32803]),
-            .long(DNGTag.stripOffsets, [0x1000]),
-            .long(DNGTag.stripByteCounts, [0x333000]),
-            .ascii(DNGTag.uniqueCameraModel, "Ikonoskop A-CAM"),
-            .bytes(DNGTag.timeCodes, timecode.smpte + timecode.smpte),
-            .srational(DNGTag.frameRate, [(Int32(fps), 1)]),
-            .ascii(DNGTag.reelName, reel, count: 16),
-        ])
-        header.append(Data(count: 0x1000 - header.count))
+    /// A 0x336000-byte frame file as the driver serves it: the camera's header template (0 =
+    /// monochrome, 1 = tungsten, 2 = daylight) with frame rate, timecodes and reel name set as
+    /// createDngHeader() does, zero-padded to 4 KiB, then pseudo-random image data and 8 KiB block.
+    /// `audio` (sample pairs) replaces the start of the block, the rest is 0xFF as on the card.
+    static func frame(seed: UInt64, fps: Int, timecode: Timecode, reel: String, kind: Int = 2,
+                      audio: Data? = nil) -> Data {
+        var header = [UInt8](repeating: 0, count: 0x1000)
+        precondition(acam_test_camera_header(Int32(kind), &header, header.count) > 0)
+        let (rate, tc, reelAt) = kind == 0 ? (0x152, 0x162, 0x172) : (0x25a, 0x26a, 0x27a)
+        for (i, b) in [UInt8(fps & 0xff), UInt8(fps >> 8), 0, 0, 1, 0, 0, 0].enumerated() {
+            header[rate + i] = b
+        }
+        header.replaceSubrange(tc..<tc + 16, with: timecode.smpte + timecode.smpte)
+        header.replaceSubrange(reelAt..<reelAt + 9, with: Array(reel.utf8.prefix(8)) + [0])
         var words = [UInt64](repeating: 0, count: 0x335000 / 8)
         var x = seed &* 0x9E37_79B9_7F4A_7C15 | 1
         for i in words.indices {
@@ -56,7 +54,13 @@ enum Fixture {
             x ^= x << 17
             words[i] = x
         }
-        return header + words.withUnsafeBytes { Data($0) }
+        var file = Data(header) + words.withUnsafeBytes { Data($0) }
+        if let audio = audio {
+            let block = CameraAudio.blockOffset
+            file.replaceSubrange(block..<block + CameraAudio.blockBytes,
+                                 with: audio + Data(repeating: 0xff, count: CameraAudio.blockBytes - audio.count))
+        }
+        return file
     }
 
     /// `ikctl eeprom 0 0x2000` output for a card holding `takes` in entries 0, 1, ... An index in
