@@ -6,17 +6,24 @@ let help = """
 
     Usage:
       acam offload --source <card> --dest <folder> [--eeprom <file> | --read-eeprom]
-                   [--no-audio] [--no-clean]
+                   [--profile <id>] [--prores log|preview|both] [--no-audio] [--no-clean]
           Copy every take of the mounted card into <folder>/<card name>/<take>/frames/,
           verify every copy with xxHash64 and write an ASC MHL history per take; then, from the
-          verified copies, <take>_Audio.wav and clean DNGs in <take>/clean/; then REPORT.md.
+          verified copies, <take>_Audio.wav, clean DNGs in <take>/clean/ and optional ProRes
+          4444 XQ files in <card>/prores/; then REPORT.md.
           The take-table check needs the card's EEPROM:
             --eeprom <file>  a dump made with: sudo tools/ikctl eeprom 0 0x2000 > <file>
             --read-eeprom    run that command now (asks for your password)
 
-      acam audio <take folder>...    <take>_Audio.wav from <take>/frames/
-      acam clean <take folder>...    clean DNGs in <take>/clean/ from <take>/frames/
+      acam audio <take folder>...                     <take>_Audio.wav from <take>/frames/
+      acam clean [--profile <id>] <take folder>...    clean DNGs in <take>/clean/
+      acam prores [--look log|preview|both] <take folder>...
+                                                      ProRes 4444 XQ in <card>/prores/
           A card folder (made by offload) stands for all its takes.
+
+      --profile <id>  colour profile for the clean DNGs: factory (default), kai02150-ir650,
+                      kai02150-ir665 (pipeline/colour/profiles/), or a folder with profile.json.
+      log = ACEScct for grading, preview = Rec.709.
 
     Options:
       -h, --help   Show this help
@@ -28,12 +35,14 @@ struct UsageError: Error, CustomStringConvertible {
     let description: String
 }
 
-/// `--name value` options and `--flag` switches.
+/// `--name value` options, `--flag` switches and the remaining positional arguments.
 struct Arguments {
     private var values: [String: String] = [:]
     private var flags: Set<String> = []
+    private(set) var positional: [String] = []
 
-    init(_ args: ArraySlice<String>, values valueNames: Set<String>, flags flagNames: Set<String>) throws {
+    init(_ args: ArraySlice<String>, values valueNames: Set<String>, flags flagNames: Set<String> = [],
+         positional allowed: Bool = false) throws {
         var it = args.makeIterator()
         while let arg = it.next() {
             if valueNames.contains(arg) {
@@ -43,6 +52,8 @@ struct Arguments {
                 values[arg] = v
             } else if flagNames.contains(arg) {
                 flags.insert(arg)
+            } else if allowed && !arg.hasPrefix("--") {
+                positional.append(arg)
             } else {
                 throw UsageError(description: "unknown option '\(arg)'")
             }
@@ -65,17 +76,17 @@ struct Arguments {
     }
 }
 
-/// tools/ikctl of this checkout (acam lives in pipeline/build/).
-func ikctlPath() -> String {
+/// This checkout's directory `relative` to pipeline/build/, where acam lives.
+func checkoutPath(_ relative: String) -> URL {
     let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-    return exe.deletingLastPathComponent().appendingPathComponent("../../tools/ikctl").standardized.path
+    return exe.deletingLastPathComponent().appendingPathComponent(relative).standardized
 }
 
 /// Runs `sudo tools/ikctl eeprom 0 0x2000`; sudo asks for the password on this terminal.
 func readEepromWithSudo() throws -> String {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/sudo")
-    p.arguments = [ikctlPath(), "eeprom", "0", "0x2000"]
+    p.arguments = [checkoutPath("../../tools/ikctl").path, "eeprom", "0", "0x2000"]
     let out = Pipe()
     p.standardOutput = out
     try p.run()
@@ -87,8 +98,34 @@ func readEepromWithSudo() throws -> String {
     return String(decoding: data, as: UTF8.self)
 }
 
+/// A profile id from pipeline/colour/profiles/, or a folder holding profile.json.
+func profile(_ name: String?) throws -> (profile: ColourProfile, folder: URL)? {
+    guard let name = name else {
+        return nil
+    }
+    let direct = URL(fileURLWithPath: name)
+    if FileManager.default.fileExists(atPath: direct.appendingPathComponent("profile.json").path) {
+        return try ColourProfile.load(direct)
+    }
+    let folder = checkoutPath("../colour/profiles").appendingPathComponent(name)
+    guard FileManager.default.fileExists(atPath: folder.appendingPathComponent("profile.json").path) else {
+        throw UsageError(description: "no colour profile '\(name)' (looked in \(folder.path))")
+    }
+    return try ColourProfile.load(folder)
+}
+
+func looks(_ value: String?) throws -> [ProResLook] {
+    switch value {
+    case nil: return []
+    case "log": return [.log]
+    case "preview": return [.preview]
+    case "both": return [.log, .preview]
+    case let v?: throw UsageError(description: "ProRes look must be log, preview or both, not '\(v)'")
+    }
+}
+
 func offload(_ args: ArraySlice<String>) throws -> Int32 {
-    let a = try Arguments(args, values: ["--source", "--dest", "--eeprom"],
+    let a = try Arguments(args, values: ["--source", "--dest", "--eeprom", "--profile", "--prores"],
                           flags: ["--read-eeprom", "--no-audio", "--no-clean"])
     var eepromText: String?
     if let path = a.value("--eeprom") {
@@ -100,15 +137,19 @@ func offload(_ args: ArraySlice<String>) throws -> Int32 {
                                  destination: URL(fileURLWithPath: try a.required("--dest")),
                                  eeprom: try eepromText.map(EepromImage.parseHexDump),
                                  eepromText: eepromText)
-    let result = try CardJob(CardJobOptions(offload: offload, audio: !a.flag("--no-audio"),
-                                            clean: !a.flag("--no-clean"))).run()
+    let options = CardJobOptions(offload: offload, audio: !a.flag("--no-audio"), clean: !a.flag("--no-clean"),
+                                 profile: try profile(a.value("--profile")), prores: try looks(a.value("--prores")))
+    let result = try CardJob(options).run()
     print("")
     for t in result.offload.takes {
-        let extra = [result.audio[t.name].map { $0.failed ? "audio FAILED" : "audio OK" },
+        var extra = [result.audio[t.name].map { $0.failed ? "audio FAILED" : "audio OK" },
                      result.clean[t.name].map { $0.failed ? "clean FAILED" : "clean OK" }].compactMap { $0 }
+        for (look, p) in (result.prores[t.name] ?? [:]).sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+            extra.append("ProRes \(look.rawValue) \(p.failed ? "FAILED" : "OK")")
+        }
         print("\(t.failed ? "FAILED  " : "verified") \(t.name)  \(t.verifiedCount)/\(t.files.count) frames  \(extra.joined(separator: ", "))")
     }
-    for p in result.offload.cardProblems {
+    for p in result.problems + result.offload.cardProblems {
         print("problem: \(p)")
     }
     print("\(result.allVerified ? "ALL VERIFIED" : "PROBLEMS FOUND"): \(result.offload.cardFolder.appendingPathComponent("REPORT.md").path)")
@@ -116,7 +157,7 @@ func offload(_ args: ArraySlice<String>) throws -> Int32 {
 }
 
 /// Take folders named on the command line; a card folder stands for the take folders in it.
-func takeFolders(_ args: ArraySlice<String>) throws -> [URL] {
+func takeFolders(_ args: [String]) throws -> [URL] {
     guard !args.isEmpty else {
         throw UsageError(description: "name at least one take or card folder")
     }
@@ -141,7 +182,7 @@ func takeFolders(_ args: ArraySlice<String>) throws -> [URL] {
 
 func audio(_ args: ArraySlice<String>) throws -> Int32 {
     var ok = true
-    for folder in try takeFolders(args) {
+    for folder in try takeFolders(Array(args)) {
         let r = try AudioTake.run(take: folder)
         ok = ok && !r.failed
         let status = r.failed ? "FAILED: \(r.problems.joined(separator: "; "))"
@@ -154,13 +195,33 @@ func audio(_ args: ArraySlice<String>) throws -> Int32 {
 }
 
 func clean(_ args: ArraySlice<String>) throws -> Int32 {
+    let a = try Arguments(args, values: ["--profile"], positional: true)
+    let chosen = try profile(a.value("--profile"))
     var ok = true
-    for folder in try takeFolders(args) {
-        let r = try CleanTake.run(take: folder, progress: { print($0) })
+    for folder in try takeFolders(a.positional) {
+        let r = try CleanTake.run(take: folder, profile: chosen?.profile, progress: { print($0) })
         ok = ok && !r.failed
         print(r.failed ? "clean  \(folder.lastPathComponent)  FAILED: \(r.problems.prefix(5).joined(separator: "; "))"
               : String(format: "clean  %@  %d frames, %.0f%% of the size, every frame decoded and compared",
                        folder.lastPathComponent, r.frames, r.ratio * 100))
+    }
+    return ok ? 0 : 1
+}
+
+func prores(_ args: ArraySlice<String>) throws -> Int32 {
+    let a = try Arguments(args, values: ["--look"], positional: true)
+    let chosen = try looks(a.value("--look") ?? "both")
+    var ok = true
+    for folder in try takeFolders(a.positional) {
+        let outputDir = folder.deletingLastPathComponent().appendingPathComponent("prores")
+        try FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
+        for look in chosen {
+            let r = try ProResTake.run(take: folder, look: look, outputDir: outputDir, progress: { print($0) })
+            ok = ok && !r.failed
+            print(r.failed ? "prores \(folder.lastPathComponent) \(look.rawValue) FAILED: \(r.problems.joined(separator: "; "))"
+                  : "prores \(folder.lastPathComponent) \(look.rawValue): \(r.output?.path ?? "?") (\(r.frames) frames)")
+            r.warnings.forEach { print("       warning: \($0)") }
+        }
     }
     return ok ? 0 : 1
 }
@@ -183,6 +244,8 @@ do {
         exit(try audio(arguments.dropFirst()))
     case "clean":
         exit(try clean(arguments.dropFirst()))
+    case "prores":
+        exit(try prores(arguments.dropFirst()))
     case nil:
         FileHandle.standardError.write(Data(help.utf8))
         exit(64)

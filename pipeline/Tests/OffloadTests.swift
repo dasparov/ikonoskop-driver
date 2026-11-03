@@ -121,19 +121,57 @@ func offloadCorruptCopyTests(_ t: TestContext) throws {
 }
 
 func offloadFlakySourceTests(_ t: TestContext) throws {
+    // The card's flash sometimes returns different data for the same frame: 04200001 reads wrong
+    // once (the second read) and right afterwards; 04200006 never reads the same twice.
     let s = try setUp(t, "flaky-source")
-    // The card returns different data the second time it is read.
+    var calls: [String: Int] = [:]
     s.job.offload.verificationRead = { path, buffer in
         let n = try FileIO.read(path, into: buffer)
-        if path.hasSuffix("04200001.DNG") {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        calls[name, default: 0] += 1
+        if name == "04200001.DNG" && calls[name] == 1 {
             buffer[0x100000] ^= 0x80
+        } else if name == "04200006.DNG" {
+            buffer[0x200000 + calls[name]!] ^= 0x01
         }
         return n
     }
     let r = try s.job.run().offload
-    t.expectEqual(r.takes.map { $0.failed }, [true, false, false], "take 1 fails")
-    t.expect(r.takes[0].problems.contains { $0.contains("different data on the second read") },
-             "reports the unstable read: \(r.takes[0].problems)")
+    let files = r.takes.flatMap { $0.files }
+    let f1 = files.first { $0.name == "04200001.DNG" }!
+    t.expect(f1.verified && !f1.rewritten && f1.sourceReads == 3, "a bad second read is resolved by a third: \(f1)")
+    let f6 = files.first { $0.name == "04200006.DNG" }!
+    t.expect(!f6.verified && f6.sourceReads == Offload.maxSourceReads, "never two equal reads: \(f6)")
+    t.expect(r.takes[2].problems.contains { $0.contains("04200006.DNG") && $0.contains("different version each of the 8 times") },
+             "reports the frame that never read the same: \(r.takes[2].problems)")
+    t.expectEqual(r.takes.map { $0.failed }, [false, false, true], "only the take with the unreadable frame fails")
+    t.expect(r.cardWarnings.contains { $0.contains("read each of them again") }, "explains the re-reads: \(r.cardWarnings)")
+}
+
+func offloadRereadReplacesBadCopyTests(_ t: TestContext) throws {
+    // The first read (the copy) was wrong; every later read returns the same, different data.
+    let s = try setUp(t, "bad-first-read")
+    let name = "04200004.DNG"
+    let source = try Data(contentsOf: s.card.appendingPathComponent("IMAGE/AC042002/\(name)"))
+    var later = source
+    later[0x200000] ^= 0x04
+    s.job.offload.verificationRead = { path, buffer in
+        let n = try FileIO.read(path, into: buffer)
+        if path.hasSuffix(name) {
+            buffer[0x200000] ^= 0x04
+        }
+        return n
+    }
+    let job = try s.job.run()
+    let r = job.offload
+    let f = r.takes[1].files.first { $0.name == name }!
+    t.expect(f.verified && f.rewritten && f.sourceReads == 3, "two later reads agree, the copy is replaced: \(f)")
+    let copy = r.cardFolder.appendingPathComponent("AC042002/frames/\(name)")
+    t.expect(try Data(contentsOf: copy) == later, "the copy now holds the version read twice")
+    t.expect(!FileManager.default.fileExists(atPath: copy.path + ".acam-reread"), "no temporary file left")
+    t.expect(job.allVerified, "resolved re-reads still verify: \(r.cardProblems + r.takes.flatMap { $0.problems })")
+    let text = try report(r)
+    t.expect(text.contains("OK (3; 1 read again)"), "the take row counts the re-read:\n\(text)")
 }
 
 func offloadFirstFrameTests(_ t: TestContext) throws {

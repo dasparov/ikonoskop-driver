@@ -72,6 +72,7 @@ enum DNGTag {
     static let forwardMatrix2: UInt16 = 0xc715
     static let timeCodes: UInt16 = 0xc763
     static let frameRate: UInt16 = 0xc764
+    static let profileName: UInt16 = 0xc6f8
     static let reelName: UInt16 = 0xc789
 }
 

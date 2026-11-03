@@ -27,6 +27,11 @@ struct FileResult {
     var sourceHash: UInt64?
     var destinationHash: UInt64?
     var error: String?
+    /// Reads of the source file: 1 while copying, 2 after verification, more when the card
+    /// returned different data and the frame was read again until two reads matched.
+    var sourceReads = 1
+    /// The copy was made from a bad read and replaced by the version two later reads agreed on.
+    var rewritten = false
 
     var verified: Bool {
         error == nil && copyHash != nil && sourceHash == copyHash && destinationHash == copyHash
@@ -47,6 +52,8 @@ struct TakeResult {
     var failed: Bool { !problems.isEmpty || files.contains { !$0.verified } }
     var bytes: Int { files.reduce(0) { $0 + $1.size } }
     var verifiedCount: Int { files.filter { $0.verified }.count }
+    /// Frames the card returned differently at first, read until two reads matched.
+    var rereadCount: Int { files.filter { $0.sourceReads > 2 }.count }
 }
 
 struct OffloadResult {
@@ -112,6 +119,14 @@ final class Offload {
         for i in result.takes.indices {
             verify(&result.takes[i], take: card.takes[i], cardFolder: cardFolder,
                    buffers: (buffers[0], buffers[3]))
+        }
+        rereadUnstable(&result, card: card, cardFolder: cardFolder, buffers: (buffers[0], buffers[1]))
+        for i in result.takes.indices {
+            recordFileProblems(&result.takes[i])
+        }
+        let reread = result.takes.reduce(0) { $0 + $1.rereadCount }
+        if reread > 0 {
+            result.cardWarnings.append("The card returned different data the second time \(reread) frames were read (random read errors of the card's flash). acam read each of them again until two reads matched exactly and kept that version; any frame where no two reads matched is listed under Problems.")
         }
         let totalFrames = card.takes.reduce(0) { $0 + $1.frames.count }
         if totalFrames <= 8 {
@@ -256,7 +271,9 @@ final class Offload {
             }
             group.wait()
             switch sourceOutcome {
-            case .success(let h): result.files[i].sourceHash = h
+            case .success(let h):
+                result.files[i].sourceHash = h
+                result.files[i].sourceReads = 2
             case .failure(let e): result.files[i].error = "second read: \(e)"
             }
             switch copyOutcome {
@@ -269,13 +286,110 @@ final class Offload {
                 progress(String(format: "verify %@  %5d/%d frames  %.0f MB/s", take.name, i + 1, take.frames.count, mbps))
             }
         }
-        for f in result.files where !f.verified {
+    }
+
+    // ---- frames that read differently ------------------------------------------------------
+
+    static let maxSourceReads = 8
+
+    /// Reads each frame whose second read differed from the first again, up to maxSourceReads
+    /// reads in all, until two reads agree byte for byte. That version is the verified one; if the
+    /// copy was made from a bad read, it is replaced. Every re-read comes from the flash: the
+    /// pending frames are read in turn with at least 8 other frames in between (the driver keeps
+    /// the last 8 frames), and the file cache is dropped before each read.
+    private func rereadUnstable(_ result: inout OffloadResult, card: CardVolume, cardFolder: URL,
+                                buffers: (UnsafeMutableRawBufferPointer, UnsafeMutableRawBufferPointer)) {
+        var pending: [(take: Int, file: Int)] = []
+        var seen: [Int: [UInt64]] = [:] // hashes read so far: the copy's first
+        for (ti, t) in result.takes.enumerated() {
+            for (fi, f) in t.files.enumerated() where f.error == nil && f.destinationHash == f.copyHash
+                && f.sourceHash != nil && f.sourceHash != f.copyHash {
+                pending.append((ti, fi))
+                seen[ti << 32 | fi] = [f.copyHash!, f.sourceHash!]
+            }
+        }
+        guard !pending.isEmpty else {
+            return
+        }
+        let pendingKeys = Set(seen.keys)
+        let fillers = card.takes.enumerated().flatMap { ti, t in
+            t.frames.enumerated().compactMap { fi, f in pendingKeys.contains(ti << 32 | fi) ? nil : f.url.path }
+        }.prefix(8)
+        progress("reread \(pending.count) frames that read differently the second time")
+        for _ in 3...Offload.maxSourceReads where !pending.isEmpty {
+            if pending.count <= 8 {
+                for path in fillers {
+                    FileIO.evictCache(path)
+                    _ = try? FileIO.read(path, into: buffers.0)
+                }
+            }
+            var still: [(take: Int, file: Int)] = []
+            for p in pending {
+                let frame = card.takes[p.take].frames[p.file]
+                let key = p.take << 32 | p.file
+                FileIO.evictCache(frame.url.path)
+                guard let n = try? verificationRead(frame.url.path, buffers.0) else {
+                    still.append(p)
+                    continue
+                }
+                let data = UnsafeRawBufferPointer(rebasing: buffers.0[0..<n])
+                let h = XXHash64.hash(data)
+                var f = result.takes[p.take].files[p.file]
+                f.sourceReads += 1
+                if h == f.copyHash {
+                    f.sourceHash = h
+                } else if seen[key]!.dropFirst().contains(h) {
+                    let copy = cardFolder.appendingPathComponent(result.takes[p.take].name)
+                        .appendingPathComponent("frames").appendingPathComponent(frame.name).path
+                    do {
+                        try replaceCopy(at: copy, with: data, hash: h, modified: f.modified, scratch: buffers.1)
+                        f.copyHash = h
+                        f.sourceHash = h
+                        f.destinationHash = h
+                        f.rewritten = true
+                        if p.file == 0 && n > FrameHeader.headerBytes {
+                            result.takes[p.take].firstFrameRawHash = XXHash64.hash(UnsafeRawBufferPointer(rebasing: data[FrameHeader.headerBytes...]))
+                        }
+                    } catch {
+                        f.error = "could not replace the copy with the version read twice: \(error)"
+                    }
+                } else {
+                    seen[key]!.append(h)
+                    still.append(p)
+                }
+                result.takes[p.take].files[p.file] = f
+            }
+            pending = still
+        }
+    }
+
+    /// Replaces this offload's own copy at `path` with `bytes`: written next to it, read back and
+    /// checked, then renamed over it.
+    private func replaceCopy(at path: String, with bytes: UnsafeRawBufferPointer, hash: UInt64, modified: Date,
+                             scratch: UnsafeMutableRawBufferPointer) throws {
+        let tmp = path + ".acam-reread"
+        try FileIO.create(tmp, bytes: bytes)
+        FileIO.evictCache(tmp)
+        let n = try FileIO.read(tmp, into: scratch)
+        guard XXHash64.hash(UnsafeRawBufferPointer(rebasing: scratch[0..<n])) == hash else {
+            unlink(tmp)
+            throw FileIOError(description: "the new copy did not read back correctly")
+        }
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: tmp)
+        guard rename(tmp, path) == 0 else {
+            throw FileIO.failure("rename", tmp)
+        }
+        try FileIO.fullSync(path)
+    }
+
+    private func recordFileProblems(_ take: inout TakeResult) {
+        for f in take.files where !f.verified {
             if let e = f.error {
-                result.problems.append("\(f.name): \(e)")
-            } else if f.sourceHash != f.copyHash {
-                result.problems.append("\(f.name): the card returned different data on the second read")
+                take.problems.append("\(f.name): \(e)")
+            } else if f.destinationHash != f.copyHash {
+                take.problems.append("\(f.name): the copy on disk differs from the card")
             } else {
-                result.problems.append("\(f.name): the copy on disk differs from the card")
+                take.problems.append("\(f.name): the card returned a different version each of the \(f.sourceReads) times it was read")
             }
         }
     }

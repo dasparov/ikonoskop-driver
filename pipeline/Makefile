@@ -19,12 +19,16 @@ TESTS      := $(sort $(wildcard Tests/*.swift))
 XXHASH     := build/xxhash.o
 # The tests also get the camera's DNG header templates from the driver's generator (core/).
 CAMERA     := build/camera_headers.o
+APP        := $(sort $(wildcard Sources/ACamApp/*.swift))
+IKCTL      := ../tools/ikctl
 
-.PHONY: all check clean
+.PHONY: all check app clean
 all: build/acam
 
 check: build/acam-tests
 	build/acam-tests
+
+app: build/ACam.app
 
 $(XXHASH): Sources/ACamKit/xxhash.c Vendor/xxhash/xxhash.h
 	mkdir -p build
@@ -40,6 +44,21 @@ build/acam: $(KIT) $(CLI) $(XXHASH) $(BRIDGE)
 build/acam-tests: $(KIT) $(TESTS) $(XXHASH) $(CAMERA) $(BRIDGE) Tests/TestBridging.h
 	$(SWIFTC) $(SWIFTFLAGS) -import-objc-header Tests/TestBridging.h -module-name acamtests $(KIT) $(TESTS) \
 	  $(XXHASH) $(CAMERA) -o $@
+
+# The Mac app: the same ACamKit sources with a SwiftUI front end. Resources: tools/ikctl for the
+# take-table check and the Phase 5 colour profiles.
+build/ACam.app: $(KIT) $(APP) $(XXHASH) $(BRIDGE) Sources/ACamApp/Info.plist $(IKCTL) $(wildcard colour/profiles/*/*)
+	rm -rf $@
+	mkdir -p $@/Contents/MacOS $@/Contents/Resources/profiles
+	cp Sources/ACamApp/Info.plist $@/Contents/Info.plist
+	cp $(IKCTL) $@/Contents/Resources/ikctl
+	for p in colour/profiles/*/; do cp -R "$${p%/}" $@/Contents/Resources/profiles/; done
+	$(SWIFTC) $(SWIFTFLAGS) -parse-as-library -import-objc-header $(BRIDGE) -module-name ACam $(KIT) $(APP) \
+	  $(XXHASH) -o $@/Contents/MacOS/ACam
+	codesign --force --sign - $@
+
+$(IKCTL):
+	$(MAKE) -C ../tools
 
 clean:
 	rm -rf build

@@ -14,7 +14,7 @@ struct CleanResult {
 }
 
 enum CleanTake {
-    static func run(take folder: URL, progress: @escaping (String) -> Void) throws -> CleanResult {
+    static func run(take folder: URL, profile: ColourProfile? = nil, progress: @escaping (String) -> Void) throws -> CleanResult {
         let fm = FileManager.default
         let framesDir = folder.appendingPathComponent("frames")
         let cleanDir = folder.appendingPathComponent("clean")
@@ -35,7 +35,7 @@ enum CleanTake {
             let out = cleanDir.appendingPathComponent(name)
             do {
                 let original = try Data(contentsOf: framesDir.appendingPathComponent(name))
-                let made = try CleanDNG.make(fromOriginal: original)
+                let made = try CleanDNG.make(fromOriginal: original, profile: profile)
                 try made.dng.withUnsafeBytes { try FileIO.create(out.path, bytes: $0) }
                 FileIO.evictCache(out.path)
                 let readBack = try Data(contentsOf: out, options: .uncached)

@@ -33,16 +33,20 @@ enum CleanDNG {
         return Raw12.unpack(file.subdata(in: offset..<offset + count))
     }
 
-    /// The clean DNG of one camera DNG, and the raw samples it holds.
-    static func make(fromOriginal file: Data) throws -> (dng: Data, samples: [UInt16]) {
+    /// The clean DNG of one camera DNG, and the raw samples it holds. With `profile`, colour frames
+    /// carry its matrices, illuminants and name instead of the factory ones.
+    static func make(fromOriginal file: Data, profile: ColourProfile? = nil) throws -> (dng: Data, samples: [UInt16]) {
         let tiff = try TIFFHeader(file.prefix(FrameHeader.headerBytes))
         let samples = try samples(ofOriginal: file)
         let encoded = samples.withUnsafeBufferPointer {
             LosslessJPEG.encodeTiles(frame: $0, width: Raw12.width, height: Raw12.height, bitDepth: 12)
         }
+        let colour = tiff.entry(DNGTag.colorMatrix1) != nil
+        let applied = colour ? profile : nil
+        let skip = replacedTags.union(applied == nil ? [] : ColourProfile.tags)
         var fields: [TIFFField] = []
         var seen = Set<UInt16>()
-        for e in tiff.entries where !replacedTags.contains(e.tag) && seen.insert(e.tag).inserted {
+        for e in tiff.entries where !skip.contains(e.tag) && seen.insert(e.tag).inserted {
             guard let f = TIFFField.copy(e, from: tiff) else {
                 throw TIFFError("tag 0x\(String(e.tag, radix: 16)) points outside the header")
             }
@@ -56,11 +60,15 @@ enum CleanDNG {
             .long(DNGTag.tileWidth, [UInt32(encoded.geometry.tileWidth)]),
             .long(DNGTag.tileLength, [UInt32(encoded.geometry.tileLength)]),
         ]
-        if tiff.entry(DNGTag.colorMatrix1) != nil {
-            fields.append(.short(DNGTag.calibrationIlluminant1, [illuminant1]))
-        }
-        if tiff.entry(DNGTag.colorMatrix2) != nil {
-            fields.append(.short(DNGTag.calibrationIlluminant2, [illuminant2]))
+        if let p = applied {
+            fields += p.fields
+        } else {
+            if colour {
+                fields.append(.short(DNGTag.calibrationIlluminant1, [illuminant1]))
+            }
+            if tiff.entry(DNGTag.colorMatrix2) != nil {
+                fields.append(.short(DNGTag.calibrationIlluminant2, [illuminant2]))
+            }
         }
         let counts = encoded.tiles.map { UInt32($0.count) }
         // The header size does not depend on the offset values, only on their number.

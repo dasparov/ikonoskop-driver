@@ -30,6 +30,8 @@ enum OffloadReport {
         | First frames | \(r.firstFrameSummary) |
         | Audio | \(audioSummary(job)) |
         | Clean DNGs | \(cleanSummary(job)) |
+        | Colour profile | \(job.profile.map { "\($0.name); DCP, ACES IDTs and OpenColorIO config in `colour/\($0.id)/`" } ?? "factory matrices (illuminants D55 / ISO studio tungsten)") |
+        | ProRes | \(proresSummary(job)) |
         | Tool | acam \(acamVersion) |
 
         ## Takes
@@ -42,7 +44,8 @@ enum OffloadReport {
             let fps = t.firstHeader?.fps ?? 0
             let dur = fps > 0 ? duration(Double(t.files.count) / fps) : "?"
             let checksums = t.verifiedCount == t.files.count && !t.files.isEmpty
-                ? "OK (\(grouped(t.files.count)))" : "**FAILED** (\(grouped(t.verifiedCount)) of \(grouped(t.files.count)) OK)"
+                ? "OK (\(grouped(t.files.count))\(t.rereadCount > 0 ? "; \(grouped(t.rereadCount)) read again" : ""))"
+                : "**FAILED** (\(grouped(t.verifiedCount)) of \(grouped(t.files.count)) OK)"
             var audio = "not made"
             if let a = job.audio[t.name] {
                 audio = a.failed ? "**FAILED**" : String(format: "OK, drift %+.1f ms", a.drift * 1000)
@@ -53,11 +56,17 @@ enum OffloadReport {
             }
             md += "| \(t.failed ? "**\(t.name)**" : t.name) | \(grouped(t.files.count)) | \(dur) | \(fpsText(t.firstHeader)) | \(t.firstHeader?.timecode?.description ?? "?") | \(t.lastHeader?.timecode?.description ?? "?") | \(checksums) | \(audio) | \(clean) |\n"
         }
-        var problems = r.cardProblems + r.takes.flatMap { t in t.problems.map { "\(t.name): \($0)" } }
+        var problems = job.problems + r.cardProblems + r.takes.flatMap { t in t.problems.map { "\(t.name): \($0)" } }
         problems += job.audio.sorted { $0.key < $1.key }.flatMap { k, a in a.problems.map { "\(k) audio: \($0)" } }
         problems += job.clean.sorted { $0.key < $1.key }.flatMap { k, c in c.problems.map { "\(k) clean DNGs: \($0)" } }
+        problems += job.prores.sorted { $0.key < $1.key }.flatMap { k, looks in
+            looks.sorted { $0.key.rawValue < $1.key.rawValue }.flatMap { look, p in p.problems.map { "\(k) ProRes \(look.rawValue): \($0)" } }
+        }
         var warnings = r.cardWarnings + r.takes.flatMap { t in t.warnings.map { "\(t.name): \($0)" } }
         warnings += job.audio.sorted { $0.key < $1.key }.flatMap { k, a in a.warnings.map { "\(k) audio: \($0)" } }
+        warnings += job.prores.sorted { $0.key < $1.key }.flatMap { k, looks in
+            looks.sorted { $0.key.rawValue < $1.key.rawValue }.flatMap { look, p in p.warnings.map { "\(k) ProRes \(look.rawValue): \($0)" } }
+        }
         md += "\n## Problems\n\n"
         md += problems.isEmpty ? "None.\n" : problems.prefix(200).map { "- \($0)\n" }.joined()
         if problems.count > 200 {
@@ -92,6 +101,16 @@ enum OffloadReport {
         let failed = job.audio.count - ok.count
         return String(format: "%d takes: 48 kHz 16-bit stereo WAV, samples copied unchanged from the frames; largest drift against the picture %.1f ms",
                       ok.count, worst * 1000) + (failed > 0 ? "; \(failed) FAILED" : "")
+    }
+
+    static func proresSummary(_ job: CardJobResult) -> String {
+        let all = job.prores.values.flatMap { $0.values }
+        guard !all.isEmpty else {
+            return "not made"
+        }
+        let looks = Set(job.prores.values.flatMap { $0.keys }).map { $0.rawValue }.sorted().joined(separator: " and ")
+        let failed = all.filter { $0.failed }.count
+        return "ProRes 4444 XQ (\(looks)) in `prores/`: \(all.count - failed) files" + (failed > 0 ? ", \(failed) FAILED" : "")
     }
 
     static func fpsText(_ h: FrameHeader?) -> String {
