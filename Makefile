@@ -6,7 +6,9 @@
 #   make install    make check, then install the kext (sudo; restart required)
 #   make uninstall  remove the installed kext (sudo; restart required)
 #   make release    make check, then dist/IkonoskopCardReader-<version>.zip (kext, scripts, docs)
-#   make pipeline   build the acam card tool (pipeline/, Swift) into pipeline/build/acam
+#   make pipeline        build the acam card tool (pipeline/, Swift) into pipeline/build/acam
+#   make pipeline-check  build and run the acam tests
+#   make app             build the ACam Mac app into pipeline/build/ACam.app
 #   make clean
 #
 # Shared compiler settings: mk/common.mk.
@@ -14,7 +16,7 @@
 VERSION := $(shell /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' kext/Info.plist)
 DIST    := IkonoskopCardReader-$(VERSION)
 
-.PHONY: all check install uninstall release pipeline clean
+.PHONY: all check install uninstall release pipeline pipeline-check app clean
 
 all:
 	$(MAKE) -C kext
@@ -40,6 +42,12 @@ release: check
 
 pipeline:
 	$(MAKE) -C pipeline
+
+pipeline-check:
+	$(MAKE) -C pipeline check
+
+app:
+	$(MAKE) -C pipeline app
 
 clean:
 	$(MAKE) -C kext clean

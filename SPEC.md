@@ -45,12 +45,12 @@ We now build everything **after** the card is mounted: a Mac tool that turns a c
 | Frame size | 2048 × 1092, 12-bit, CFA pattern GRBG |
 | Format | Uncompressed DNG 1.2, about 3.35 MB of image data per frame |
 | Header | 4 KiB generated header + raw flash data copied byte for byte |
-| Padding | 8,192 bytes of 0xFF after each frame's image data *(wrong: the block holds data, probably the audio; see Phase 0 findings)* |
+| Padding | 8,192 bytes of 0xFF after each frame's image data *(wrong: the block is the audio; see Phase 2)* |
 | Per-frame metadata | SMPTE timecode, frame rate (24/1), ReelName |
 | Take table | Read via `ikctl eeprom` |
 | Current card | 20 takes, 9,359 frames *(card ACAM 000; the card in the reader on 2026-11-03 is ACAM 102: 9 takes, 14,640 frames)* |
 | DNG tag problems | No Make or Model; WhiteLevel listed twice; CalibrationIlluminant values 38268 and 36168 are invalid; no BaselineExposure *(the two illuminant values encode 5500 K and 3400 K; see Phase 0 findings)* |
-| Audio | Not exposed by the old or new driver. The AUDIO folder is created empty. Location unknown. *(probable location found; see Phase 0 findings)* |
+| Audio | Not exposed by the old or new driver. The AUDIO folder is created empty. Location unknown. *(found: inside every frame; see Phase 2)* |
 | Corruption behaviour | A corrupt EEPROM entry makes the driver serve flash page 0 as that frame, with only a kernel log line (`core/ik_core.cpp:313-331`) |
 
 ## 5. Architecture
@@ -123,7 +123,17 @@ Each phase ends with a **gate**: tests that must pass before moving on.
 6. Write `REPORT.md`: card summary, then per take: frame count, duration, first and last timecode, checksum status, warnings. End with **ALL VERIFIED** or **PROBLEMS FOUND**.
 7. Check that the first frame of every take is different from every other take. A copy made on 2026-11-01 had take 1's frames in every take, so this check guards against that bug returning.
 
-**Gate:** tests with fixture files, including a deliberately corrupted copy that must be caught; a real run on the current card shows ALL VERIFIED; first frames of all 20 takes are distinct.
+**Gate:** tests with fixture files, including a deliberately corrupted copy that must be caught; a real run on the current card shows ALL VERIFIED; first frames of every take on the test card are distinct. *(Was "all 20 takes": the card in the reader now is ACAM 102 with 9 takes.)*
+
+#### Phase 1 results (2026-11-03)
+
+- [x] Steps 1–7 are built: `acam offload` (`pipeline/Sources/ACamKit/`: `Offload.swift`, `CardJob.swift`, `ASCMHL.swift`, `Report.swift`).
+- Verification: each file is hashed with xxHash64 (the official xxHash 0.8.3) while it is copied, read a second time from the card after all takes are copied, and read back from the destination. These reads bypass the macOS file cache. All three must agree.
+- ASC MHL: written in the standard ASC MHL v2 layout, `<take>/ascmhl/0001_<take>_<time>Z.mhl` plus `ascmhl_chain.xml`, instead of one `<take>.mhl` (that name belongs to the older MHL v1 format). The WAV and the clean DNGs are added as generations 2 and 3. The reference `ascmhl` tool (1.2) verifies these folders and catches a changed byte.
+- Take table: reading the EEPROM needs `sudo` (the driver lets only root do it): `--eeprom <file>` or `--read-eeprom`; the app asks for the password with the standard macOS dialog. Without it, the report says PROBLEMS FOUND, because the check was not done.
+- Kernel log: read with `log show` after the copy (no root needed). Errors of the driver session that served the card mark the affected take, or the card, FAILED. A driver restart during the copy (reader reconnected) is a problem too.
+- Tests (`make pipeline-check`): fixture cards built from the camera's real header templates. A corrupted copy, an unstable second read, duplicate first frames, take-table differences, driver-log errors and an existing destination are all caught.
+- [ ] Real run on the test card: waits for the card (being used for the clap take) and the EEPROM dump.
 
 ### Phase 2 — Find the audio
 
@@ -139,6 +149,15 @@ Reading flash areas the driver doesn't normally read may need a new **read-only*
 
 **Gate:** a written finding in `SPEC.md` with evidence. If audio exists, a raw dump of the clap take's audio that plays the clap.
 
+#### Phase 2 finding (2026-11-03): the audio is inside every frame
+
+- **Where:** the 8 KiB block after each frame's image (file offset 0x334000, which the header labels `DNGPrivateData`). No new driver code was needed.
+- **Format:** 16-bit signed little-endian PCM, 48 kHz, two channels interleaved (channel 1, channel 2). At 24 fps each frame holds 2,000 sample pairs, and about one frame in 100 holds 2,001 (the audio clock runs about 5 ppm fast against the frame clock). The first `FF FF FF FF` pair ends a frame's samples; it can never be data, because channel 2's lowest bit is always 0. Joined in frame order, the sound is continuous (gap test: +0.02 samples).
+- **Evidence:** `work/phase2/findings.md` (byte statistics over 848 frames, continuity tests, spectra), WAVs in `work/phase2/wav/`.
+- **Content so far:** none of the existing takes has sound from the scene, only the camera's own hum at about −76 dBFS. The audio input was probably not connected.
+- **Also found:** (1) the card's flash data has rare 1→0 bit flips, about 3.8 per million bits, heard as clicks in the audio. The Phase 1 real run shows whether they are stored on the card or happen when reading. (2) Of the two timecodes in each frame, the first counts at 25 fps even on 24 fps takes; the second counts at 24.
+- [ ] Still open, needs the clap take: the sync offset between picture and sound, which channel is left, loud sound, and other frame rates. The gate's "dump that plays the clap" waits for that take.
+
 ### Phase 3 — Audio export (only if Phase 2 found audio)
 
 `acam audio`, also part of `acam offload`
@@ -147,6 +166,13 @@ Reading flash areas the driver doesn't normally read may need a new **read-only*
 - Embed the starting timecode (BWF `bext` chunk) so editing software lines it up automatically.
 
 **Gate:** the clap lines up with the clap frame within one frame; over a full take, drift stays under one frame at the end.
+
+#### Phase 3 results (2026-11-03)
+
+- [x] `acam audio` (and the offload) writes `<take>_Audio.wav`: 48 kHz, 16-bit, stereo, channel 1 first as stored, samples unchanged, no resampling. A BWF `bext` chunk holds the take's first timecode as TimeReference (the first DNG TimeCodes entry, the one editors read), counted at the take's frame rate. Each WAV is added to the take's ASC MHL history.
+- Take AC000001 (623 frames): 25.958 s; drift against the picture +0.15 ms (7 extra sample pairs); byte-identical to the separate Phase 2 extraction; bext start 01:25:16:23.
+- Drift in general: about 18 ms per hour, under one frame for takes up to about 2 hours.
+- [ ] The clap part of the gate needs the clap take.
 
 ### Phase 4 — Clean DNGs
 
@@ -163,6 +189,15 @@ Write corrected copies into `<take>/clean/`. Never modify the verified originals
 - Compress losslessly (lossless JPEG, as Adobe DNG Converter does).
 
 **Gate:** every clean frame decodes to exactly the same pixel values as its original (automated check over a full take); files are smaller (report the saving); a clean take opens in DaVinci Resolve as a clip, with the camera named correctly. I will check Resolve myself.
+
+#### Phase 4 results (2026-11-03)
+
+- [x] `acam clean` (and the offload) writes `<take>/clean/`: Make "Ikonoskop", Model "A-Cam dII", one WhiteLevel (4095), BaselineExposure 0, tiled lossless JPEG (Compression 7, 256×224 tiles, as Adobe's DNG SDK picks). Timecodes, frame rate, reel name and every other tag are unchanged.
+- **Illuminants (changed from the plan):** 38268 and 36168 are 0x8000 + 5500 and 0x8000 + 3400, so ColorMatrix1 was calibrated at 5500 K and ColorMatrix2 at 3400 K. The clean DNGs use 20 (D55) and 24 (ISO studio tungsten, 3200 K), the closest standard codes, in that order. 17 and 21 would have put each matrix at the wrong colour temperature.
+- **The 8 KiB block is the audio, not padding.** The clean DNGs leave it out, so they end at the image data, but only after the WAV is written. The verified originals keep it.
+- Evidence: every clean frame is read back from disk, decoded and compared with the original pixels. LibRaw, an independent decoder, reads them to identical raw values, and Apple's RAW engine opens them. Take AC000001: 52% of the original size (card 102 samples: 46%).
+- Side finding: columns 0–27 and 2020–2047 are black in every frame (unexposed margin). Not changed. Marking them with the DNG ActiveArea / DefaultCrop tags would remove the black side bars (picture 1992×1092).
+- [ ] The Resolve check is yours.
 
 ### Phase 5 — Colour from sensor data (no chart)
 
@@ -200,6 +235,19 @@ Write corrected copies into `<take>/clean/`. Never modify the verified originals
 
 If I get a colour chart later, add a chart-based profile as option C in the same comparison. Nothing else needs to change.
 
+#### Phase 5 results (2026-11-03): steps 1–6 done, waiting for your pick
+
+- **Datasheets** downloaded (Kodak 2008 Rev 1.0 and Truesense 2012 Rev 2.0), kept out of git in `pipeline/colour/datasheet/`. The colour curves are vector drawings inside the PDFs, so they were read out exactly; the 2008 and 2012 sheets agree to within 0.002. Numbers: `pipeline/colour/data/kai02150_qe.csv` (380–780 nm, 10 nm steps). Check image: `work/phase5/qe_check.png`.
+- **Tool:** our own open-source profile builder, `pipeline/colour/build_profile.py` (numpy only), instead of dcamprof (not installed); no new dependency.
+- **Profiles:** B-650 (IR-cut at 650 nm) and B-665. Tuned once to 665 nm, because B-650 made skin and reds pinker in every frame, and 665 nm is also what the camera's own white-balance presets point to. Files: `pipeline/colour/profiles/`.
+- **Comparison sheets:** `work/phase5/compare_sheet.png` (A vs B-650) and `work/phase5/compare_sheet_v2_ir665.png` (A vs B-665), seven frames with skin, foliage, overcast sky and neutrals. There is no blue sky or colour chart in the footage. Greys render exactly neutral with A and with both Bs.
+- **Assumptions** (full table with reasons: `work/phase5/assumptions.md`):
+  - Sensor: KAI-02150 colour version with the first-generation colour filters (part KAI-02150-CBA) and AR-coated cover glass. The datasheet curves are taken as typical for every sensor. The response to light power is QE × wavelength.
+  - IR-cut filter: smooth edge, 95% transmission below it, practically zero 50 nm above it. Cut-off 650 nm by default, the middle of typical values (Basler 650, MidOpt SP645, FLIR 680 nm), tuned to 665 nm.
+  - Optical low-pass filter, lens and cover glass: spectrally neutral. The model sees 10–20% more blue than the factory presets imply, possibly blue absorption in the lens or glass; not modelled.
+  - Fit: 123 reference colours (ColorChecker 24 plus the 99 CIE 224:2017 samples), CIE 1931 2° observer, illuminants A and D65 (D50 for the ForwardMatrix), white held exact, ΔE2000 minimised. Typical error on chart colours: 2.3–3 ΔE2000.
+- [ ] Step 7 waits for your pick: A, B-650 or B-665.
+
 ### Phase 6 — ProRes export and Mac app
 
 - `acam prores`: render clean DNGs to ProRes 4444 XQ using Apple's AVFoundation, with the WAV audio muxed in and timecode set. Offer two looks: log (ACEScct) for grading, and a simple Rec.709 preview.
@@ -211,6 +259,11 @@ If I get a colour chart later, add a chart-based profile as option C in the same
 
 - Test the driver on a newer macOS when I have a spare Mac or partition, using the checklist in `HANDOVER.md`.
 - Evaluate porting the driver to PCIDriverKit (a dext). That would remove the need for Reduced Security and kext approval. Write up the effort and the entitlement Apple requires, then stop and let me decide.
+
+#### Phase 7 results (2026-11-03)
+
+- [x] Driver-port evaluation: `docs/dext-evaluation.md`. In short: the hardware side maps onto Apple's PCIDriverKit, but a DriverKit driver cannot present the synthesized card volume, so the practical design is a dext that hands frames straight to `acam` (no mounted volume). It would take about 5.5–11 person-weeks, a paid Apple developer account, and Apple's approval of a PCI entitlement for Xilinx's vendor ID, which may be refused or slow. Recommendation: keep the kext for now; if Full Security matters, first spend a day on a test dext.
+- [ ] The newer-macOS test needs a spare Mac or partition.
 
 ---
 
