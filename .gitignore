@@ -4,6 +4,8 @@ test/ik_harness
 test/libiktest.dylib
 test/.venv/
 pipeline/build/
+# Sensor datasheet (third-party PDF), downloaded for Phase 5.
+pipeline/colour/datasheet/
 *.o
 *.dSYM/
 .DS_Store
