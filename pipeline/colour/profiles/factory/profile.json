@@ -1,0 +1,31 @@
+{
+  "id": "factory",
+  "name": "A-Cam dII factory matrices (D55 / 3200 K)",
+  "calibrationIlluminant1": 20,
+  "calibrationIlluminant2": 24,
+  "colorMatrix1": [
+    1.0048,
+    -0.2724,
+    -0.05,
+    -0.5656,
+    1.3498,
+    0.2078,
+    -0.2916,
+    0.3498,
+    0.6394
+  ],
+  "colorMatrix2": [
+    1.3328,
+    -0.5606,
+    0.1145,
+    -0.434,
+    1.2479,
+    0.4138,
+    -0.1563,
+    0.2192,
+    0.8677
+  ],
+  "forwardMatrix1": null,
+  "forwardMatrix2": null,
+  "rationalDenominator": 10000
+}

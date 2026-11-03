@@ -7,6 +7,7 @@ pipeline/build/
 # Sensor datasheet (third-party PDF), downloaded for Phase 5.
 pipeline/colour/datasheet/
 *.o
+__pycache__/
 *.dSYM/
 .DS_Store
 dist/
