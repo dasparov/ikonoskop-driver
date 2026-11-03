@@ -17,7 +17,9 @@ CORE     := ../core
 CORE_SRC := $(wildcard $(CORE)/*.cpp)
 CORE_HDR := $(wildcard $(CORE)/*.h $(CORE)/*.inc)
 WORK     ?= /tmp/ik_core_test
-ORIGINAL ?= ../reference/IkonoskopCardReader12.x86_64
+# Ikonoskop's v1.2 x86_64 kext code is not in the repo. By default it is looked for in a folder
+# ikonoskop-private/ next to the repo.
+ORIGINAL ?= ../../ikonoskop-private/reference/IkonoskopCardReader12.x86_64
 VENV     := .venv
 
 all: check
@@ -37,7 +39,7 @@ fs: ik_harness
 
 $(VENV)/bin/python:
 	python3 -m venv $(VENV)
-	$(VENV)/bin/pip install -q unicorn
+	$(VENV)/bin/pip install -q unicorn==2.1.4
 
 ifeq ($(wildcard $(ORIGINAL)),)
 diff:
