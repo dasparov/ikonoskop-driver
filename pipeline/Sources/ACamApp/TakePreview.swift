@@ -255,12 +255,12 @@ struct PreviewView: View {
         .onAppear { player.seek(to: 0) }
     }
 
-    /// The window's first size: about 90% of the screen, in the frame's shape plus room for the
-    /// title and the controls.
+    /// The window's first size: half the screen's width (never taller than 90% of the screen), in
+    /// the frame's shape plus room for the title and the controls.
     static var idealSize: CGSize {
         let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
         let chrome: CGFloat = 130
-        let width = min(screen.width * 0.9, (screen.height * 0.9 - chrome) * CGFloat(Raw12.width) / CGFloat(Raw12.height))
+        let width = min(screen.width * 0.5, (screen.height * 0.9 - chrome) * CGFloat(Raw12.width) / CGFloat(Raw12.height))
         return CGSize(width: width, height: width * CGFloat(Raw12.height) / CGFloat(Raw12.width) + chrome)
     }
 }
