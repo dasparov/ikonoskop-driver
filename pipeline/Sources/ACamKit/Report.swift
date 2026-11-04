@@ -1,7 +1,7 @@
 // REPORT.md for one offloaded card.
 import Foundation
 
-let acamVersion = "0.1.0"
+let acamVersion = "0.2.0"
 
 enum OffloadReport {
     static func markdown(_ job: CardJobResult) -> String {

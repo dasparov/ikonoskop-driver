@@ -2,7 +2,7 @@
 
 ACam copies the footage off **Ikonoskop A-Cam dII** memory cards on an Apple silicon Mac, checks that every frame was
 copied correctly, and prepares the footage for editing: sound as a WAV file, corrected DNGs with better colour, and
-ProRes movies if you want them. You can look at every take before you copy it.
+ProRes movies if you want them. You can look at every take, with its sound, before you copy it.
 
 ## Why it exists
 
@@ -11,38 +11,73 @@ the MK-3 ExpressCard reader work on Apple silicon Macs; the card then appears as
 card number (for example `ACAM 102`). ACam is the app on top of it. It does what a careful assistant would do with every
 card, and a few things nobody could do before:
 
-- **Copies are checked, not trusted.** Every frame is read twice from the card and once from the copy, and the three
-  reads must agree. A-Cam cards return slightly different data now and then (on one test card, about 1 frame in 6 on a
-  second read). ACam reads such a frame again until two reads match exactly. A Finder copy reads every frame once and can
-  carry these errors.
-- **Proof that the copy is complete.** A report (`REPORT.md`) and standard checksum files (ASC MHL) for every take.
+- **Copies are checked, not trusted.** Every frame is read twice from the card and once from each copy, and the reads
+  must agree. A-Cam cards return slightly different data now and then (on one test card, about 1 frame in 6 on a second
+  read). ACam reads such a frame again until two reads match exactly. A Finder copy reads every frame once and can carry
+  these errors.
+- **Two drives in one go.** ACam can write a second copy to another drive at the same time, from the same reads of the
+  card.
+- **Proof that the copy is complete,** today and later: a report (`REPORT.md`) and standard checksum files (ASC MHL) for
+  every take, which **Verify a copy** checks again whenever you like.
 - **The camera's sound.** The A-Cam dII stores its sound inside every frame, which no driver ever exposed. ACam turns it
-  into a WAV file with the take's timecode.
+  into a WAV file with the take's timecode, and plays it in the take preview.
 - **Corrected DNGs.** The camera's DNG files have tag errors: no make or model, invalid light-source codes, and a black
   level that makes shadows green. ACam's clean DNGs fix them, use a colour profile built from the sensor's published data,
   and are about half the size, without changing a single pixel value.
 
 ## What you need
 
-- An Apple silicon Mac with macOS 13 or later, with the driver installed and approved (see the
+- An Apple silicon Mac with macOS 13 or later, with the card reader driver installed and approved (see the
   [README](../README.md#install)).
 - The MK-3 ExpressCard reader in a Thunderbolt-to-ExpressCard adapter, and an A-Cam dII card.
-- The app itself. Build it once in Terminal with `make app` in the repository folder (it needs Apple's Command Line
-  Tools); it appears as `pipeline/build/ACam.app`. Drag it to Applications if you like.
+- The app: see [Installing ACam](#installing-acam).
 - Free disk space where the copies go: see [How much space you need](#how-much-space-you-need).
+
+## Installing ACam
+
+**The ready-made app (no developer tools needed).** Download `ACam-<version>.zip` from the repository's
+[Releases](https://github.com/dasparov/ikonoskop-driver/releases) page and open it. Drag `ACam.app` into **Applications**.
+
+ACam is free and not registered with Apple, so the first time macOS refuses to open it ("Apple could not verify…").
+Do this once:
+
+1. Open **Terminal** (in Applications › Utilities), paste this line and press Return:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/ACam.app
+   ```
+
+   This removes the "downloaded from the internet" mark from ACam and from the small tool inside it that reads the
+   card's take table.
+2. Open ACam as usual.
+
+Without Terminal: double-click ACam, click **Done** (or **Cancel**), open **System Settings › Privacy & Security**,
+scroll down, click **Open Anyway** next to the message about ACam, and confirm. If the take table check later fails with
+a message about `ikctl`, use the Terminal line above.
+
+**Building it yourself.** In Terminal, in the repository folder, run `make app` (it needs Apple's Command Line Tools);
+the app appears as `pipeline/build/ACam.app`. The [command-line tool](#for-advanced-users-the-command-line) is built
+with `make pipeline`.
 
 ## First start
 
 1. Connect the reader, insert the card, and open ACam. The card appears in the **Card** menu after a few seconds.
 2. macOS asks **"ACam would like to access files on a removable volume"**. Click **OK**. Until you do, ACam waits at
-   "Reading ACAM …". macOS asks this again whenever the app is rebuilt.
-3. When you copy a card with **Check the card's take table** ticked, macOS asks for your password: ACam reads the card's
+   "Reading ACAM …". macOS asks this again whenever the app is rebuilt or updated.
+3. When the first run finishes, macOS asks whether ACam may send notifications. Click **Allow** to get a message when a
+   long copy is done (see [When a run ends](#when-a-run-ends)).
+4. When you copy a card with **Check the card's take table** ticked, macOS asks for your password: ACam reads the card's
    own list of takes from the reader with an administrator command (`ikctl eeprom`).
+
+ACam remembers the destination, the second copy drive, the outputs and the colour profile between launches.
 
 ## The window
 
-**Card row.** The **Card** menu lists the cards that are in the reader. **Refresh** looks again; **Eject** ejects the
-card so you can take it out. **List** / **Grid** switches how the takes are shown (ACam remembers your choice).
+ACam's lettering is Helvetica, the typeface of Ikonoskop's website and camera manual.
+
+**Card row.** The **Card** menu lists the cards that are in the reader. **Refresh** looks again (also at the
+destination drives); **Eject** ejects the card so you can take it out. **List** / **Grid** switches how the takes are
+shown.
 
 **Card line.** Under the card menu: the number of takes, how long they run, how much footage there is, and how full the
 card is, with the recording time left. Example: *9 takes · 10 min 10 s · 49.29 GB of footage — card 61% full (49.41 GB of
@@ -50,13 +85,19 @@ card is, with the recording time left. Example: *9 takes · 10 min 10 s · 49.29
 the card as 100.4 GB: the driver's volume is bigger than the card. ACam works out the real size.)
 
 **Takes.** One row (List) or picture (Grid) per take: the take's first frame, its name (`AC` + card number + take
-number), number of frames, length, size, frame rate and start timecode. The pictures are developed in the colour profile
-chosen under Outputs and change when you change the profile. Click a picture to open the take's
-[preview](#previewing-a-take). Tick a take's box to include it in **Process selected takes**.
+number), when it was recorded, number of frames, length, size, frame rate, the camera's colour temperature setting and
+the start timecode. The pictures are developed in the colour profile chosen under Outputs and change when you change the
+profile. Click a picture to open the take's [preview](#previewing-a-take). Tick a take's box to include it in **Process
+selected takes**.
 
-**Destination.** Click **Choose…** and pick a folder, usually on an external drive. ACam makes a new folder named after
-the card inside it (for example `ACAM 102`). That folder must not exist yet: ACam never writes into an existing copy. The
-free space on that drive is shown next to the path.
+**Destination.** Click **Choose…** and pick a folder, usually on an external drive. ACam makes a folder named after the
+card inside it (for example `ACAM 102`). The free space on that drive is shown next to the path, or **not connected**
+when the drive is not plugged in. If the folder is already there from an earlier run, ACam adds what it lacks: see
+[Adding to an earlier copy](#adding-to-an-earlier-copy).
+
+**Second copy.** Optional. Click **Choose…** and pick a folder on a *different* drive; ACam writes the same files there.
+**None** goes back to one copy. When the second drive is not connected, the line says so in orange and runs make one
+copy, at the destination; the report then says that no second copy was made. See [A second copy](#a-second-copy).
 
 **Outputs.**
 
@@ -70,28 +111,37 @@ free space on that drive is shown next to the path.
 | Check the card's take table | Compares the takes on the card with the card's own list in the reader's memory. Asks for your password |
 | Colour profile | The colour the clean DNGs and ProRes movies carry; see [Colour](#colour) |
 
-**Process card** copies and checks every take on the card. **Process selected takes…** copies only the ticked takes;
-see [Copying only some takes](#copying-only-some-takes). Under the buttons, ACam says how much footage the run copies and
-about how much it writes with the chosen outputs, and warns in orange when the destination is too small.
+**Buttons.** **Process card** copies and checks every take on the card. **Process selected takes…** copies only the
+ticked takes; see [Copying only some takes](#copying-only-some-takes). **Verify a copy…** checks a finished copy again;
+see [Checking a copy later](#checking-a-copy-later). While a run is going, these become **Stop**; see
+[Stopping a run](#stopping-a-run).
+
+Under the buttons, ACam says what a run will do before it starts: how much footage it copies, about how much it writes
+with the chosen outputs (and to the second drive), and what an earlier run already left at the destination. An orange
+line says why a run cannot start, for example **Not enough space**; the button is then greyed out.
 
 **Result.** When a run ends, the window shows its result in large letters and the report below it:
 
-- **ALL VERIFIED** (green): every take was copied and every check passed.
+- **ALL VERIFIED** (green): every take on the card is copied and every check passed.
 - **PARTIAL** (orange): only the selected takes were copied, and they all passed. The others are still only on the card.
+- **STOPPED** (orange): you stopped the run; see [Stopping a run](#stopping-a-run).
 - **PROBLEMS FOUND** (red): something did not pass. The report says what.
+- **NOT STARTED** (red): the run could not start, for example because the destination is full. Nothing was copied.
 
 **Show in Finder** opens the card's folder with `REPORT.md` selected.
 
 ## Previewing a take
 
-Click a take's picture to open its preview window, which plays the take straight from the card before it is copied.
+Click a take's picture to open its preview window, which plays the take straight from the card, with its sound, before
+it is copied.
 
 - **Space bar**: play and pause. **Left / right arrow**: one frame back or on. Drag the **slider** to jump anywhere.
+- **M** or the speaker button: sound off and on. ACam remembers the choice.
 - The timecode and frame number are shown next to the slider.
 - The window opens at half the screen's width; drag its corner to resize it, or use the green button for full screen.
-- While playing, frames are developed at half resolution so the take plays in real time; when you pause or step, the
-  frame is shown at full resolution. If the Mac falls behind, frames are skipped; the take never plays slower.
-- The preview has no sound.
+- The sound sets the pace, so you can find the clap: the picture follows the sound. While playing, frames are developed
+  at half resolution; when you pause or step, the frame is shown at full resolution, without sound. If the Mac falls
+  behind developing pictures, pictures are skipped, never sound. If the card itself is read too slowly, the sound waits.
 - **While a card is being copied, previews are off.** Clicking a take then shows a message, and starting a copy closes an
   open preview. The copy gets the card to itself.
 
@@ -99,17 +149,53 @@ Click a take's picture to open its preview window, which plays the take straight
 
 1. Insert the card and wait until the takes appear.
 2. Look through the takes if you like.
-3. Click **Choose…** and pick where the copy goes. Check that the free space is enough (ACam warns in orange if not).
+3. Check the destination (and the second copy, if you want one). ACam remembers them from last time.
 4. Choose the outputs and the colour profile.
-5. Click **Process card**. If the take table check is on, type your password.
+5. Read the line under the buttons: it says what the run will copy and write. Click **Process card**. If the take table
+   check is on, type your password.
 6. Wait. The progress bar and the line under it show what ACam is doing. Copying a full 49 GB card to an external hard
    disk took about 50 minutes in testing; a fast SSD is several times quicker.
-   - Keep the Mac awake and plugged in, and leave the card and the destination drive connected. ACam does not stop the Mac
-     from going to sleep by itself.
-   - The card menu, the colour profile and the previews are locked until the copy has finished.
+   - ACam keeps the Mac awake until the run is over (the screen may still turn off). Closing a laptop's lid still puts
+     it to sleep, so leave it open, and keep it plugged in.
+   - Leave the card and the destination drives connected.
+   - The card menu, the outputs and the previews are locked until the copy has finished.
 7. When it says **ALL VERIFIED**, click **Eject** and take the card out.
 
-Copy every card to two drives before you record over it: run ACam a second time with another destination.
+### When a run ends
+
+ACam plays a sound, shows a notification (if you allowed notifications) and, if you are working in another app, bounces
+its Dock icon until you look. Verify a copy does the same.
+
+### Stopping a run
+
+Click **Stop** (or press **⌘.**), and confirm. What happens depends on how far the run is:
+
+- **While copying** (before every copy has been verified): ACam removes what this run copied. Nothing half-checked is
+  left behind; the card still has every take. The result says **STOPPED**.
+- **While making the outputs** (WAV, clean DNGs, ProRes, the second copy): the copied takes are verified and stay. The
+  output being made is removed, and the report lists what was not made. Process the card into the same destination
+  again later: ACam makes only what is missing.
+
+Quitting ACam or a crash during a run leaves an unfinished folder behind. The next run into the same destination moves
+it to the Trash (from where you can still get it back) and copies the take again.
+
+## A second copy
+
+Choose a **Second copy** folder on another drive. Then every run writes the same files to both drives:
+
+- Each frame is read from the card once and written to both drives at the same time, and both copies are read back and
+  compared with the card's two reads. A second copy therefore costs little extra time.
+- The WAV files, clean DNGs, ProRes movies and colour files are made on the first drive and then copied to the second,
+  each file read back and compared.
+- Both card folders get the same `REPORT.md`, and each take folder on the second drive gets its own checksum history,
+  so each drive can be checked on its own with **Verify a copy**.
+- Both drives must have room for the run, or it does not start.
+- If something goes wrong only on the second drive, the first copy is still verified; the result is PROBLEMS FOUND and
+  the report says what. Process the card again into the same folders to repair the second copy: ACam copies what is
+  missing there from the first drive.
+
+When the second drive is not connected, ACam makes one copy and says so: in the window before you start, and in the
+report.
 
 ## Copying only some takes
 
@@ -117,14 +203,44 @@ Tick the takes you want and click **Process selected takes…**. ACam asks first
 the card. The result is **PARTIAL**, never ALL VERIFIED, and the report lists the takes that were not copied, so it is
 always clear that the card still holds footage that exists nowhere else.
 
-Do this when you need a few takes quickly. Copy the whole card as well before the card is used again: anything that is not
-copied is lost when you record over it. A second run needs a new destination folder.
+Do this when you need a few takes quickly. Copy the rest before the card is used again: anything that is not copied is
+lost when you record over it. You can add the rest to the same folder later.
+
+## Adding to an earlier copy
+
+When the destination already holds a folder for this card (from a PARTIAL run, a stopped run, or a run with fewer
+outputs), **Process card** adds what it lacks: the takes not yet copied, and the chosen outputs the copied takes don't
+have yet. The line under the buttons says what will be added, for example *ACAM 102 is already at the destination with
+2 of 9 takes. Process card adds 7 takes; what is there stays as it is.*
+
+- Takes that are already there are never copied again or changed. ACam checks that they really are this card's takes:
+  it compares their first frame with the card. A folder with a different recording under the same names (for example
+  from an earlier shoot on the same card) is refused; choose another destination.
+- The new report covers the whole card. The earlier report and take table are kept as `REPORT-1.md` and `EEPROM-1.txt`
+  (then `-2`, and so on).
+- When every take is there with every chosen output, the line says *nothing to add* and the button is greyed out.
+
+## Checking a copy later
+
+**Verify a copy…** reads a copy that ACam made again, file by file, and compares every file with the checksums in its
+`ascmhl/` folders. Use it after moving a copy to another drive, before you delete a card, or now and then for archived
+footage. Choose the card's folder (or one take folder in it).
+
+- **ALL MATCH** (green): every file is still exactly as it was written.
+- **MISMATCH FOUND** (red): the list shows each changed or missing file. Copy those takes again from another copy or
+  from the card.
+- Files that are not in the checksum history are listed as warnings only.
+
+It reads everything, so it takes about as long as reading the files from that drive: the 49 GB test card took 16
+minutes from a USB hard disk. It can be stopped like a run. The free `ascmhl` tool checks the same files:
+`ascmhl-debug verify <take folder>`.
 
 ## What you get on disk
 
 ```
 ACAM 102/                      the card's folder, inside the destination you chose
   REPORT.md                    the report: result, every take, problems and warnings
+  REPORT-1.md                  the report of an earlier run into this folder, if any
   EEPROM.txt                   the card's take table, when it was checked
   colour/<profile>/            the colour profile: Lightroom/Camera Raw DCP, ACES input transforms, OpenColorIO config
   prores/                      ProRes movies, one per take and look, if chosen
@@ -137,17 +253,18 @@ ACAM 102/                      the card's folder, inside the destination you cho
   ...
 ```
 
-The ASC MHL files let anyone check the copies later, also on another computer, with the free `ascmhl` tool:
-`ascmhl-debug verify <take folder>`.
+The second copy, if chosen, holds the same files.
 
 ## Reading the report
 
-`REPORT.md` opens in any text editor. It starts with the result and a table: the card, where it was copied to, when, how
-many takes and frames, and the result of each check. Then one line per take: frames, length, frame rate, first and last
-timecode, checksums (with the number of frames read again), sound and clean DNGs.
+`REPORT.md` opens in any text editor. It starts with the result and a table: the card, where it was copied to (and the
+second copy), when, how many takes and frames, and the result of each check. Then one line per take: frames, length,
+frame rate, first and last timecode, checksums (with the number of frames read again), sound and clean DNGs. Takes and
+outputs from an earlier run into the same folder say *earlier run*.
 
 **Problems** are reasons the result is not ALL VERIFIED, for example a frame where no two reads ever matched, or a take
-that the card's take table lists but the card does not show. Copy the card again to a new folder.
+that the card's take table lists but the card does not show. Process the card again; if a take keeps failing, copy the
+card to a new folder.
 
 **Warnings** are worth knowing but do not make the copy incomplete. The common ones:
 
@@ -156,6 +273,8 @@ that the card's take table lists but the card does not show. Copy the card again
 - *The take table also keeps N entries from earlier recordings*: older recordings that were deleted from the card's list.
   The driver does not show them, so they were not copied.
 - *Only the chosen takes were copied*: a partial copy; the listed takes are still only on the card.
+- *Stopped before everything was made*: the outputs listed were not made; process the card again to make them.
+- *No second copy was made*: the second drive was not connected.
 
 ## Colour
 
@@ -185,9 +304,10 @@ a 3-minute take. If nothing was connected to the camera's audio input, the file 
 
 ## Camera settings in the files
 
-The card records, per take: the **date and time** it was recorded (the files' dates in Finder), the **frame rate**, the
-**white balance preset** (daylight or tungsten), **colour or black-and-white**, two **timecodes** (one counting the
-recording, one the time of day) and the reel name. ACam shows the frame rate and the start timecode.
+The card records, per take: the **date and time** it was recorded (the files' dates), the **frame rate**, the
+**colour temperature** setting (the camera's COL. TEMP menu: DAYLIGHT or TUNGSTEN, shown as DL or TS in the viewfinder),
+**colour or black-and-white**, two **timecodes** (one counting the recording, one the time of day) and the reel name.
+ACam shows the recording date, frame rate, colour temperature (or *Monochrome*) and start timecode.
 
 The card does **not** record ISO or gain, shutter speed or angle, the aperture or anything about the lens. These settings
 are not in the camera's take table or in the frames, so no software can read them. Note them on set.
@@ -203,8 +323,8 @@ are not in the camera's take table or in the frames, so no software can read the
 | Sound | 11.5 MB |
 
 A full 80 GB card (about 16½ minutes) needs about 80 GB for the copies alone, or about 125 GB with clean DNGs. ACam shows
-the estimate for the card in front of you before you start, and refuses to start when there is not even room for the
-copies.
+the estimate for the card in front of you before you start, for both drives, and does not start a run that will not fit
+with the chosen outputs. The outputs' sizes are estimates, so leave a little room to spare.
 
 ## Ejecting the card
 
@@ -213,9 +333,10 @@ refused while the card is being copied. Ejecting in Finder works too.
 
 ## Safety, in short
 
-- Every frame is read twice from the card and once from the copy; all three must match.
-- An existing copy is never overwritten.
+- Every frame is read twice from the card and once from each copy; all reads must match.
+- Nothing that is already copied is overwritten. Unfinished leftovers of an interrupted run go to the Trash, not away.
 - A copy of some takes is never called ALL VERIFIED.
+- A run that will not fit does not start.
 - No previews, card changes or eject during a copy.
 - The card itself is never written to: the driver is read-only.
 
@@ -225,9 +346,13 @@ refused while the card is being copied. Ejecting in Finder works too.
 |---|---|
 | "No A-Cam card mounted" | Check that the reader is connected and the card is in. Click **Refresh**. If Finder doesn't show the card either, see the driver's [README](../README.md#troubleshooting) |
 | The window stays at "Reading ACAM …" | Answer macOS's question about access to removable volumes (it may be behind other windows) |
-| "… already exists; choose a new destination folder" | The destination already has a folder with the card's name. Choose another folder, or make a new one in the Choose… window |
-| "… has N MB free, the card needs N MB" | Free up space or choose another drive |
-| PROBLEMS FOUND | Read the Problems section of the report, then copy the card again to a new folder |
+| macOS says ACam cannot be opened | See [Installing ACam](#installing-acam) |
+| "Not enough space…" | Free up space, untick outputs you don't need now, or choose another drive. Outputs can be added later |
+| "… holds another recording" or "… is not on this card" | The destination already has a folder with this card's name from a different recording. Choose another destination folder |
+| "the second copy must go to another drive" | Choose a second copy folder on a different drive, or click **None** |
+| "nothing to add" | The destination already holds every take with these outputs |
+| PROBLEMS FOUND | Read the Problems section of the report, then process the card again |
+| MISMATCH FOUND after Verify a copy | The listed files have changed on that drive. Copy those takes again from your other copy or from the card |
 | The preview says it could not read a frame | The card was probably taken out. Insert it again and reopen the preview |
 
 ## For advanced users: the command line
@@ -237,15 +362,20 @@ The app runs the same code as the `acam` command (build it with `make pipeline`;
 ```sh
 sudo tools/ikctl eeprom 0 0x2000 > eeprom.txt     # the card's take table
 pipeline/build/acam offload --source "/Volumes/ACAM 102" --dest /Volumes/Backup --eeprom eeprom.txt --prores both
-pipeline/build/acam offload --source "/Volumes/ACAM 102" --dest /Volumes/Backup --takes AC102003,AC102007
-pipeline/build/acam offload ... --profile factory   # Ikonoskop's colour instead of the sensor-data profile
-pipeline/build/acam --help                          # everything else: audio, clean and prores on copied takes
+pipeline/build/acam offload ... --second-dest /Volumes/Backup2   # a second copy on another drive
+pipeline/build/acam offload ... --takes AC102003,AC102007        # only these takes (PARTIAL)
+pipeline/build/acam offload ... --add                            # add what an earlier run's folder lacks
+pipeline/build/acam offload ... --profile factory                # Ikonoskop's colour instead of the sensor-data profile
+pipeline/build/acam verify "/Volumes/Backup/ACAM 102"            # check a copy against its checksums
+pipeline/build/acam --help                                       # everything else
 ```
+
+Ctrl-C stops a run the way the Stop button does; pressing it twice quits at once. Without `--add`, `acam offload`
+refuses a destination that already has the card's folder.
 
 ## Known limits
 
-- Previews have no sound.
-- A run cannot be stopped once it has started.
-- ACam does not keep the Mac awake during a copy.
-- One destination per run; for a second copy, run it again.
-- A partial copy cannot be completed later into the same folder: copy the whole card to a new folder.
+- Closing a laptop's lid puts the Mac to sleep even during a run.
+- The sizes of the outputs are estimates; a drive that is nearly full can still run out during the ProRes movies.
+- Verify a copy checks the take folders. `REPORT.md`, the ProRes movies and the colour files have no checksums.
+- ACam is not registered with Apple: the first start needs the steps in [Installing ACam](#installing-acam).

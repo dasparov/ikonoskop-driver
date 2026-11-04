@@ -156,7 +156,7 @@ Changes from Ikonoskop's v1.2 besides the Apple silicon port:
 
 | Step | What you get |
 |---|---|
-| Verified copy | `<card>/<take>/frames/`: every frame, read twice from the card and once from the copy, compared with xxHash64. Frames the card returns differently are read again until two reads match. An ASC MHL checksum history per take (`<take>/ascmhl/`) and `REPORT.md`, ending with ALL VERIFIED, PARTIAL (only some takes were chosen) or PROBLEMS FOUND |
+| Verified copy | `<card>/<take>/frames/`: every frame, read twice from the card and once from the copy, compared with xxHash64. Frames the card returns differently are read again until two reads match. Optionally a second copy on another drive, written from the same reads. An ASC MHL checksum history per take (`<take>/ascmhl/`) and `REPORT.md`, ending with ALL VERIFIED, PARTIAL (only some takes were chosen), STOPPED or PROBLEMS FOUND |
 | Audio | `<take>/<take>_Audio.wav`: the camera's 48 kHz 16-bit stereo sound, which is stored inside each frame, with the start timecode (BWF) |
 | Clean DNGs | `<take>/clean/`: Make and Model, valid colour tags, the black level corrected (the camera's header makes shadows green), lossless compression (about half the size), pixel-identical to the originals. Colour: a profile built from the sensor's published data (`kai02150-ir665`), with its Lightroom DCP, ACES input transforms and OpenColorIO config in `<card>/colour/` |
 | ProRes (optional) | `<card>/prores/`: ProRes 4444 XQ, ACEScct log or Rec.709, with sound and timecode |
@@ -166,15 +166,21 @@ On the command line (build it with `make pipeline`):
 ```sh
 sudo tools/ikctl eeprom 0 0x2000 > eeprom.txt     # the card's take table, checked against the copies
 pipeline/build/acam offload --source "/Volumes/ACAM 000" --dest /Volumes/Backup --eeprom eeprom.txt --prores both
+pipeline/build/acam verify "/Volumes/Backup/ACAM 000"   # check a copy again later against its checksums
 ```
 
 `--profile factory` keeps Ikonoskop's factory colour matrices instead of the sensor-data profile (`pipeline/colour/profiles/`);
-`--takes AC000001,AC000004` copies only those takes (the report then says PARTIAL).
+`--takes AC000001,AC000004` copies only those takes (the report then says PARTIAL); `--second-dest <folder>` writes a
+second copy to another drive; `--add` adds the takes and outputs an earlier run's card folder lacks. A run that will not fit
+with its outputs does not start, the Mac is kept awake while it runs, and Ctrl-C stops it cleanly.
 
-The Mac app does the same with buttons: build it with `make app` and open `pipeline/build/ACam.app`. It shows each take's
-first frame (as a list or a grid), plays a take straight from the card before you copy it, shows how full the card is and
-how much a run will write, copies the whole card or only the ticked takes, and ejects the card. The
-**[ACam user manual](docs/ACam-manual.md)** explains it step by step.
+The Mac app does the same with buttons. Download `ACam-<version>.zip` from [Releases](../../releases) (no developer tools
+needed), or build it with `make app` and open `pipeline/build/ACam.app`. It shows each take's first frame, recording date
+and colour temperature setting (as a list or a grid), plays a take with its sound straight from the card before you copy
+it, shows how full the card is and what a run will write, copies the whole card or only the ticked takes to one or two
+drives, adds the rest to the same folder later, can be stopped, says when it is done, checks a copy again later (Verify a
+copy), and ejects the card. The **[ACam user manual](docs/ACam-manual.md)** explains it step by step, including the first
+start of the downloaded app.
 
 ## Building and testing
 
@@ -185,6 +191,7 @@ make release         # make check, then dist/IkonoskopCardReader-<version>.zip
 make pipeline        # the acam tool (pipeline/build/acam)
 make pipeline-check  # its tests
 make app             # the ACam Mac app (pipeline/build/ACam.app)
+make app-release     # its tests, then dist/ACam-<version>.zip
 ```
 
 The file system tests create and mount disk images under `/tmp`. The differential test runs Ikonoskop's original x86_64 driver
