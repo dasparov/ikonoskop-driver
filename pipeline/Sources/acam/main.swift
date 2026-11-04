@@ -38,6 +38,12 @@ let help = """
                       or a folder with profile.json.
       log = ACEScct for grading, preview = Rec.709.
 
+      acam verify <folder>...
+          Check a copy made by offload, for example after moving it to another drive: every file
+          the take's ASC MHL history (ascmhl/) lists is read again and compared with its
+          xxHash64. A card folder stands for all its takes. Prints ALL MATCH (exit 0) or
+          MISMATCH FOUND (exit 1).
+
     Options:
       -h, --help   Show this help
       --version    Show the version
@@ -268,6 +274,34 @@ func prores(_ args: ArraySlice<String>) throws -> Int32 {
     return ok ? 0 : 1
 }
 
+func verify(_ args: ArraySlice<String>) throws -> Int32 {
+    let a = try Arguments(args, values: [], positional: true)
+    guard !a.positional.isEmpty else {
+        throw UsageError(description: "name at least one card or take folder")
+    }
+    var ok = true
+    for path in a.positional {
+        let r = try CopyVerifier.verify(URL(fileURLWithPath: path), progress: { print($0) })
+        ok = ok && r.ok
+        for t in r.takes {
+            if t.ok {
+                print(String(format: "OK      %@  %d files  %.1f GB", t.name, t.files, Double(t.bytes) / 1e9))
+            } else {
+                let counts = [(t.mismatched.count, "changed"), (t.missing.count, "missing"),
+                              (t.problems.count, t.problems.count == 1 ? "problem" : "problems")]
+                    .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
+                print("FAILED  \(t.name)  \(counts.joined(separator: ", "))")
+                t.mismatched.forEach { print("        changed: \($0)") }
+                t.missing.forEach { print("        missing: \($0)") }
+                t.problems.forEach { print("        problem: \($0)") }
+            }
+            t.unlisted.forEach { print("        warning: not in the checksum history: \($0)") }
+        }
+    }
+    print(ok ? "ALL MATCH" : "MISMATCH FOUND")
+    return ok ? 0 : 1
+}
+
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("acam: \(message)\n".utf8))
     exit(64) // EX_USAGE
@@ -288,6 +322,8 @@ do {
         exit(try clean(arguments.dropFirst()))
     case "prores":
         exit(try prores(arguments.dropFirst()))
+    case "verify":
+        exit(try verify(arguments.dropFirst()))
     case nil:
         FileHandle.standardError.write(Data(help.utf8))
         exit(64)

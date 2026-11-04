@@ -13,6 +13,10 @@ struct MHLEntry {
     let hashDate: Date
 }
 
+struct MHLError: Error, CustomStringConvertible {
+    let description: String
+}
+
 enum ASCMHL {
     static let toolName = "acam"
 
@@ -72,6 +76,41 @@ enum ASCMHL {
         return x
     }
 
+    /// Every <hash> of one generation file, in file order: path, size, lastmodificationdate (as
+    /// `modified`), xxh64 and its hashdate.
+    static func readGeneration(_ url: URL) throws -> [MHLEntry] {
+        let name = url.lastPathComponent
+        let doc: XMLDocument
+        do {
+            doc = try XMLDocument(contentsOf: url)
+        } catch {
+            throw MHLError(description: "\(name) is unreadable: \(error.localizedDescription)")
+        }
+        let dates = DateFormatter()
+        dates.locale = Locale(identifier: "en_US_POSIX")
+        dates.timeZone = TimeZone(identifier: "UTC")
+        dates.dateFormat = dateTimeFormat
+        return try doc.nodes(forXPath: "//*[local-name()='hash']").map { hash in
+            guard let pathNode = try hash.nodes(forXPath: "*[local-name()='path']").first as? XMLElement,
+                  let path = pathNode.stringValue, !path.isEmpty else {
+                throw MHLError(description: "\(name) has an entry without a path")
+            }
+            guard let size = pathNode.attribute(forName: "size")?.stringValue.flatMap(Int.init),
+                  let modified = pathNode.attribute(forName: "lastmodificationdate")?.stringValue.flatMap({ dates.date(from: $0) }) else {
+                throw MHLError(description: "\(name): missing or invalid size or lastmodificationdate for \(path)")
+            }
+            guard let xxh64 = try hash.nodes(forXPath: "*[local-name()='xxh64']").first as? XMLElement,
+                  let hex = xxh64.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), hex.count == 16,
+                  let value = UInt64(hex, radix: 16) else {
+                throw MHLError(description: "\(name): missing or invalid xxh64 for \(path)")
+            }
+            guard let hashDate = xxh64.attribute(forName: "hashdate")?.stringValue.flatMap({ dates.date(from: $0) }) else {
+                throw MHLError(description: "\(name): missing or invalid hashdate for \(path)")
+            }
+            return MHLEntry(path: path, size: size, modified: modified, xxh64: value, hashDate: hashDate)
+        }
+    }
+
     // ---- chain -----------------------------------------------------------------------------
 
     static func readChain(_ url: URL) throws -> [(sequence: Int, path: String, c4: String)] {
@@ -128,11 +167,14 @@ enum ASCMHL {
 
     // ---- formatting ------------------------------------------------------------------------
 
+    /// How `dateTime(_:)` writes dates, in UTC.
+    static let dateTimeFormat = "yyyy-MM-dd'T'HH:mm:ssxxx"
+
     static func dateTime(_ date: Date) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.timeZone = TimeZone(identifier: "UTC")
-        f.dateFormat = "yyyy-MM-dd'T'HH:mm:ssxxx"
+        f.dateFormat = dateTimeFormat
         return f.string(from: date)
     }
 
