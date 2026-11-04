@@ -342,9 +342,9 @@ struct CardPlan {
     /// Why the destinations cannot take the run, or nil. `free`, `secondFree`: free bytes on the
     /// first and second destination (nil: unknown).
     func shortfall(free: Int64?, secondFree: Int64?) -> String? {
-        let what = chosen == nil ? "the card" : "the chosen takes"
+        let what = chosen == nil ? "the card needs" : "the chosen takes need"
         if let free = free, free < bytes {
-            return "Not enough space: \(cardFolder.deletingLastPathComponent().path) has \(CardPlan.size(free)) free, \(what) need about \(CardPlan.size(bytes)) with these outputs."
+            return "Not enough space: \(cardFolder.deletingLastPathComponent().path) has \(CardPlan.size(free)) free, \(what) about \(CardPlan.size(bytes)) with these outputs."
         }
         if let second = secondFolder, let free = secondFree, free < secondBytes {
             return "Not enough space for the second copy: \(second.deletingLastPathComponent().path) has \(CardPlan.size(free)) free, it needs about \(CardPlan.size(secondBytes))."
