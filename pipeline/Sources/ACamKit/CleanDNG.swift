@@ -1,10 +1,10 @@
 // acam clean: corrected, losslessly compressed copies of verified frames, in <take>/clean/.
 //
 // Changes from the camera's DNG: Make and Model added; one WhiteLevel instead of two; valid
-// CalibrationIlluminant codes; BaselineExposure 0; the image tiled and lossless-JPEG compressed
-// (Compression 7, as Adobe DNG Converter writes it); the 8 KiB block after the image
-// (DNGPrivateData, the audio) left out, since `acam audio` exports it to a WAV. TimeCodes,
-// FrameRate, ReelName, the colour matrices and every other tag are kept as they are.
+// CalibrationIlluminant codes; BaselineExposure 0; colour frames' BlackLevel corrected; the image
+// tiled and lossless-JPEG compressed (Compression 7, as Adobe DNG Converter writes it); the 8 KiB
+// block after the image (DNGPrivateData, the audio) left out, since `acam audio` exports it to a
+// WAV. TimeCodes, FrameRate, ReelName, the colour matrices and every other tag are kept as they are.
 import Foundation
 
 enum CleanDNG {
@@ -14,6 +14,12 @@ enum CleanDNG {
     /// Closest EXIF LightSource codes: 20 = D55 (5503 K), 24 = ISO studio tungsten (3200 K).
     static let illuminant1: UInt16 = 20
     static let illuminant2: UInt16 = 24
+    /// Black level of every CFA channel of a colour frame. The camera's colour header templates
+    /// give the greens 80 and red and blue 90 (daylight), or red 80 too (tungsten). Measured on
+    /// cards 000 and 102, all four channels share one black level of about 90: the same dark floor,
+    /// and the same temporal noise at equal raw values (SPEC Phase 5, "Black level"). The greens'
+    /// 80 left about 10 too much green in every shadow.
+    static let blackLevel: UInt16 = 90
 
     /// Tags replaced or dropped: the strip layout, the compression, the private data block, the
     /// illuminants, and the all-zero entry of two of the original templates.
@@ -33,6 +39,26 @@ enum CleanDNG {
         return Raw12.unpack(file.subdata(in: offset..<offset + count))
     }
 
+    /// A camera DNG with a colour frame's black levels corrected in its header, for developing
+    /// camera DNGs directly (`acam prores` without clean DNGs). Anything else comes back unchanged.
+    static func correctingBlackLevel(ofOriginal file: Data) throws -> Data {
+        let tiff = try TIFFHeader(file.prefix(FrameHeader.headerBytes))
+        guard tiff.uint(DNGTag.compression) == 1, tiff.entry(DNGTag.colorMatrix1) != nil,
+              let e = tiff.entry(DNGTag.blackLevel), e.type == TIFFType.short else {
+            return file
+        }
+        guard e.valueOffset + e.byteCount <= file.count else {
+            throw TIFFError("BlackLevel points outside the file")
+        }
+        var out = file
+        let at = out.startIndex + e.valueOffset
+        for i in 0..<Int(e.count) {
+            out[at + 2 * i] = UInt8(blackLevel & 0xff)
+            out[at + 2 * i + 1] = UInt8(blackLevel >> 8)
+        }
+        return out
+    }
+
     /// The clean DNG of one camera DNG, and the raw samples it holds. With `profile`, colour frames
     /// carry its matrices, illuminants and name instead of the factory ones.
     static func make(fromOriginal file: Data, profile: ColourProfile? = nil) throws -> (dng: Data, samples: [UInt16]) {
@@ -43,7 +69,7 @@ enum CleanDNG {
         }
         let colour = tiff.entry(DNGTag.colorMatrix1) != nil
         let applied = colour ? profile : nil
-        let skip = replacedTags.union(applied == nil ? [] : ColourProfile.tags)
+        let skip = replacedTags.union(colour ? [DNGTag.blackLevel] : []).union(applied == nil ? [] : ColourProfile.tags)
         var fields: [TIFFField] = []
         var seen = Set<UInt16>()
         for e in tiff.entries where !skip.contains(e.tag) && seen.insert(e.tag).inserted {
@@ -60,6 +86,9 @@ enum CleanDNG {
             .long(DNGTag.tileWidth, [UInt32(encoded.geometry.tileWidth)]),
             .long(DNGTag.tileLength, [UInt32(encoded.geometry.tileLength)]),
         ]
+        if colour, let black = tiff.entry(DNGTag.blackLevel) {
+            fields.append(.short(DNGTag.blackLevel, Array(repeating: blackLevel, count: Int(black.count))))
+        }
         if let p = applied {
             fields += p.fields
         } else {

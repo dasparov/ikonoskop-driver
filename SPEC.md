@@ -49,7 +49,7 @@ We now build everything **after** the card is mounted: a Mac tool that turns a c
 | Per-frame metadata | SMPTE timecode, frame rate (24/1), ReelName |
 | Take table | Read via `ikctl eeprom` |
 | Current card | 20 takes, 9,359 frames *(card ACAM 000; the card in the reader on 2026-11-03 is ACAM 102: 9 takes, 14,640 frames)* |
-| DNG tag problems | No Make or Model; WhiteLevel listed twice; CalibrationIlluminant values 38268 and 36168 are invalid; no BaselineExposure *(the two illuminant values encode 5500 K and 3400 K; see Phase 0 findings)* |
+| DNG tag problems | No Make or Model; WhiteLevel listed twice; CalibrationIlluminant values 38268 and 36168 are invalid; no BaselineExposure *(the two illuminant values encode 5500 K and 3400 K; see Phase 0 findings. Also, the greens' BlackLevel is 10 too low: green shadows; see Phase 5, black level)* |
 | Audio | Not exposed by the old or new driver. The AUDIO folder is created empty. Location unknown. *(found: inside every frame; see Phase 2)* |
 | Corruption behaviour | A corrupt EEPROM entry makes the driver serve flash page 0 as that frame, with only a kernel log line (`core/ik_core.cpp:313-331`) |
 
@@ -195,7 +195,7 @@ Write corrected copies into `<take>/clean/`. Never modify the verified originals
 
 #### Phase 4 results (2026-11-03)
 
-- [x] `acam clean` (and the offload) writes `<take>/clean/`: Make "Ikonoskop", Model "A-Cam dII", one WhiteLevel (4095), BaselineExposure 0, tiled lossless JPEG (Compression 7, 256×224 tiles, as Adobe's DNG SDK picks). Timecodes, frame rate, reel name and every other tag are unchanged.
+- [x] `acam clean` (and the offload) writes `<take>/clean/`: Make "Ikonoskop", Model "A-Cam dII", one WhiteLevel (4095), BaselineExposure 0, tiled lossless JPEG (Compression 7, 256×224 tiles, as Adobe's DNG SDK picks). Timecodes, frame rate, reel name and every other tag are unchanged, except colour frames' BlackLevel: 90 in every channel since 2026-11-04 (see Phase 5, black level).
 - **Illuminants (changed from the plan):** 38268 and 36168 are 0x8000 + 5500 and 0x8000 + 3400, so ColorMatrix1 was calibrated at 5500 K and ColorMatrix2 at 3400 K. The clean DNGs use 20 (D55) and 24 (ISO studio tungsten, 3200 K), the closest standard codes, in that order. 17 and 21 would have put each matrix at the wrong colour temperature.
 - **The 8 KiB block is the audio, not padding.** The clean DNGs leave it out, so they end at the image data, but only after the WAV is written. The verified originals keep it.
 - Evidence: every clean frame is read back from disk, decoded and compared with the original pixels. LibRaw, an independent decoder, reads them to identical raw values, and Apple's RAW engine opens them. Take AC000001: 52% of the original size (card 102 samples: 46%).
@@ -243,13 +243,18 @@ If I get a colour chart later, add a chart-based profile as option C in the same
 - **Datasheets** downloaded (Kodak 2008 Rev 1.0 and Truesense 2012 Rev 2.0), kept out of git in `pipeline/colour/datasheet/`. The colour curves are vector drawings inside the PDFs, so they were read out exactly; the 2008 and 2012 sheets agree to within 0.002. Numbers: `pipeline/colour/data/kai02150_qe.csv` (380–780 nm, 10 nm steps). Check image: `work/phase5/qe_check.png`.
 - **Tool:** our own open-source profile builder, `pipeline/colour/build_profile.py` (numpy only), instead of dcamprof (not installed); no new dependency.
 - **Profiles:** B-650 (IR-cut at 650 nm) and B-665. Tuned once to 665 nm, because B-650 made skin and reds pinker in every frame, and 665 nm is also what the camera's own white-balance presets point to. Files: `pipeline/colour/profiles/`.
-- **Comparison sheets:** `work/phase5/compare_sheet.png` (A vs B-650) and `work/phase5/compare_sheet_v2_ir665.png` (A vs B-665), seven frames with skin, foliage, overcast sky and neutrals. There is no blue sky or colour chart in the footage. Greys render exactly neutral with A and with both Bs.
+- **Comparison sheets:** `work/phase5/compare_sheet.png` (A vs B-650) and `work/phase5/compare_sheet_v2_ir665.png` (A vs B-665), seven frames with skin, foliage, overcast sky and neutrals. There is no blue sky or colour chart in the footage. Greys render exactly neutral with A and with both Bs. These first sheets used the camera's wrong black level (below): every option had green shadows. Corrected sheets: `work/phase5/compare_sheet_v3_b650.png` and `compare_sheet_v3_b665.png`.
 - **Assumptions** (full table with reasons: `work/phase5/assumptions.md`):
   - Sensor: KAI-02150 colour version with the first-generation colour filters (part KAI-02150-CBA) and AR-coated cover glass. The datasheet curves are taken as typical for every sensor. The response to light power is QE × wavelength.
   - IR-cut filter: smooth edge, 95% transmission below it, practically zero 50 nm above it. Cut-off 650 nm by default, the middle of typical values (Basler 650, MidOpt SP645, FLIR 680 nm), tuned to 665 nm.
   - Optical low-pass filter, lens and cover glass: spectrally neutral. The model sees 10–20% more blue than the factory presets imply, possibly blue absorption in the lens or glass; not modelled.
   - Fit: 123 reference colours (ColorChecker 24 plus the 99 CIE 224:2017 samples), CIE 1931 2° observer, illuminants A and D65 (D50 for the ForwardMatrix), white held exact, ΔE2000 minimised. Typical error on chart colours: 2.3–3 ΔE2000.
-- [ ] Step 7 waits for your pick: A, B-650 or B-665.
+- **Black level (2026-11-04, after your feedback "everything has a green bias, the shadows a lot"):** the camera's header says black is 80 for the two green channels and 90 for red and blue (the tungsten template says 80 for red too). The pixels disagree:
+  - In 30 frames from both cards, the darkest values of all four channels are the same: the 0.001 / 0.01 / 0.1 / 1% percentiles are 86–87 / 88–89 / 91 / 93–95 in every channel.
+  - At equal raw values, all four channels have the same temporal noise (measured from consecutive frames). A 10-step difference in black would add about 1.5 DN² to green at every brightness; there is none.
+
+  So all four channels share one black level of about 90. The greens' 80 left about 10 extra steps of green in every shadow, multiplied by the sheets' exposure lift (up to 16×). Clean DNGs now say 90 for every channel (monochrome frames keep their 60, not measured); `acam prores` on camera DNGs uses the same value; the comparison renders too. The shared value is 90 ± about 2 (from the dark floor); a few seconds recorded with the lens cap on would pin it down. Scripts: `work/phase5/black_level_check.py`, `work/phase5/black_level_ptc.py`.
+- [ ] Step 7 waits for your pick from the corrected sheets: A, B-650 or B-665.
 
 ### Phase 6 — ProRes export and Mac app
 

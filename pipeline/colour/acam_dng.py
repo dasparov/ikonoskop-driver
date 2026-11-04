@@ -23,6 +23,11 @@ TAG_IMAGE_LENGTH = 0x0101
 TAG_BITS_PER_SAMPLE = 0x0102
 TAG_COMPRESSION = 0x0103
 
+# Black level of every CFA channel of a colour frame, as `acam clean` writes it (CleanDNG.blackLevel).
+# The camera's header says 80 for the greens and 90 for red and blue (tungsten: red 80), but all four
+# channels share one black level of about 90 (SPEC Phase 5, "Black level").
+COLOUR_BLACK_LEVEL = 90.0
+
 _TYPES = {1: ("B", 1), 2: ("s", 1), 3: ("H", 2), 4: ("I", 4), 5: ("I", 8), 7: ("B", 1),
           8: ("h", 2), 9: ("i", 4), 10: ("i", 8), 11: ("f", 4), 12: ("d", 8)}
 
@@ -86,8 +91,17 @@ class Frame:
         self.cfa = pix.reshape(self.height, self.width)
 
     @property
-    def black_levels(self):
+    def header_black_levels(self):
+        """BlackLevel as the camera's header states it, by (row, column) parity."""
         return np.array(self.tags[TAG_BLACK_LEVEL], dtype=np.float64).reshape(2, 2)
+
+    @property
+    def black_levels(self):
+        """Black level by (row, column) parity: COLOUR_BLACK_LEVEL for colour frames, the header's
+        values for monochrome ones."""
+        if TAG_COLOR_MATRIX1 in self.tags:
+            return np.full((2, 2), COLOUR_BLACK_LEVEL)
+        return self.header_black_levels
 
     @property
     def white_level(self):

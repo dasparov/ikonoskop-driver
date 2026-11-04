@@ -3,7 +3,8 @@
 //
 // Picture: every DNG (<take>/clean/, or <take>/frames/ when there is no clean/) is developed by
 // Apple's RAW engine (Core Image's CIRAWFilter) from the DNG's own colour matrices and
-// AsShotNeutral white balance, with sharpening, noise reduction, detail, moire reduction, local
+// AsShotNeutral white balance (camera DNGs with the clean DNGs' corrected black level, see
+// CleanDNG.blackLevel), with sharpening, noise reduction, detail, moire reduction, local
 // tone mapping and lens correction all off. Two looks:
 //
 //   ACEScct  for grading. Scene-linear development (boostAmount 0 = no tone curve, shadowBias 0,
@@ -241,7 +242,9 @@ private final class FrameRenderer {
     }
 
     func render(_ url: URL, into pb: CVPixelBuffer) throws {
-        guard let raw = CIRAWFilter(imageURL: url) else {
+        // Camera DNGs (frames/) get the clean DNGs' black level, which Core Image reads from the header.
+        let dng = try CleanDNG.correctingBlackLevel(ofOriginal: Data(contentsOf: url))
+        guard let raw = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else {
             throw TIFFError("Core Image cannot open the DNG")
         }
         raw.sharpnessAmount = 0

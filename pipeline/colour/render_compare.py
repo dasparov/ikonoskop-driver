@@ -13,7 +13,8 @@ A: ColorMatrix1/2 from the frame header, with CalibrationIlluminant1 = 20 (D55, 
 B: ColorMatrix1/2 and ForwardMatrix1/2 from a DCP (build_profile.py), interpolated the same way.
 
 Development (identical for A and B):
-  * black level per CFA position from BlackLevel, white level from WhiteLevel;
+  * black level 90 in every CFA position, as acam clean writes it (the header's 80 for the greens
+    is wrong: acam_dng.COLOUR_BLACK_LEVEL), white level from WhiteLevel;
   * half-resolution demosaic: each 2x2 GRBG cell becomes one RGB pixel (greens averaged);
   * white balance from AsShotNeutral; channels clipped at the white level after balance;
   * exposure: one gain per frame, computed from the white-balanced camera green channel only

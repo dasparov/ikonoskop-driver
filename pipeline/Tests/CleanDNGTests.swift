@@ -24,11 +24,14 @@ func cleanDNGTests(_ t: TestContext) throws {
         } else {
             t.expectEqual(clean.uint(DNGTag.calibrationIlluminant1), 20, "\(name) illuminant 1 = D55")
             t.expectEqual(clean.uint(DNGTag.calibrationIlluminant2), 24, "\(name) illuminant 2 = ISO studio tungsten")
+            // The template's per-channel black levels (greens 80) become the one measured level.
+            t.expectEqual(clean.uints(DNGTag.blackLevel), [90, 90, 90, 90], "\(name) black level 90 in every CFA position")
         }
         // Every other original tag is kept with the same type, count and value bytes: timecodes,
-        // frame rate, reel name, colour matrices, black level, CFA pattern, crop, ...
+        // frame rate, reel name, colour matrices, CFA pattern, crop, a monochrome frame's black level, ...
+        let changed = CleanDNG.replacedTags.union(kind == 0 ? [] : [DNGTag.blackLevel])
         var seen = Set<UInt16>()
-        for e in orig.entries where !CleanDNG.replacedTags.contains(e.tag) && seen.insert(e.tag).inserted {
+        for e in orig.entries where !changed.contains(e.tag) && seen.insert(e.tag).inserted {
             guard let c = clean.entry(e.tag) else {
                 t.expect(false, "\(name) lost tag 0x\(String(e.tag, radix: 16))")
                 continue
@@ -36,6 +39,20 @@ func cleanDNGTests(_ t: TestContext) throws {
             t.expect(c.type == e.type && c.count == e.count && clean.value(c) == orig.value(e),
                      "\(name) tag 0x\(String(e.tag, radix: 16)) unchanged")
         }
+
+        // A camera DNG developed directly (acam prores without clean/) gets the same black level,
+        // and nothing else in the file changes.
+        let patched = try CleanDNG.correctingBlackLevel(ofOriginal: original)
+        if kind == 0 {
+            t.expect(patched == original, "monochrome camera DNG unchanged")
+        } else if let e = orig.entry(DNGTag.blackLevel) {
+            let header = try TIFFHeader(patched.prefix(FrameHeader.headerBytes))
+            t.expectEqual(header.uints(DNGTag.blackLevel), clean.uints(DNGTag.blackLevel), "\(name) camera DNG black level as in the clean DNG")
+            let differing = zip(patched.indices, zip(patched, original)).filter { $0.1.0 != $0.1.1 }.map { $0.0 }
+            t.expect(patched.count == original.count && differing.allSatisfy { (e.valueOffset..<e.valueOffset + e.byteCount).contains($0) },
+                     "\(name) camera DNG: only the BlackLevel values change")
+        }
+        t.expect(try CleanDNG.correctingBlackLevel(ofOriginal: made.dng) == made.dng, "\(name) clean DNG left as it is")
         t.expect(try CleanDNG.samples(ofClean: made.dng) == CleanDNG.samples(ofOriginal: original), "\(name) pixels")
         t.expectEqual(made.samples.count, 2048 * 1092, "\(name) sample count")
     }
