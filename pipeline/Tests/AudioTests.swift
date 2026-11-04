@@ -93,6 +93,28 @@ func audioTests(_ t: TestContext) throws {
     t.expectEqual(r2.samplePairs, 2001 + 1999, "clamped to the expected count")
     t.expectEqual(r2.warnings.count, 2, "both frames reported: \(r2.warnings)")
 
+    // The preview's floats: signed, channel 1 then channel 2, scaled by 1/32,768, stopping at the
+    // end marker, cut and padded to the limits.
+    var block = Data()
+    for v: Int16 in [-32_768, 16_384, 1, -2] {
+        block.append16(UInt16(bitPattern: v))
+    }
+    block.append(Data(repeating: 0xff, count: 4))
+    block.append(Data(repeating: 0x11, count: 8))
+    let lsb: Float = 1 / 32_768
+    var left = [Float](repeating: 9, count: 5), right = left
+    let floats = { (limits: ClosedRange<Int>) -> Int in
+        block.withUnsafeBytes { CameraAudio.floatSamples(inBlock: $0, limits: limits, left: &left, right: &right) }
+    }
+    t.expectEqual(floats(1...3), 2, "pairs up to the end marker")
+    t.expectEqual(Array(left[0..<2]), [-1, lsb], "channel 1")
+    t.expectEqual(Array(right[0..<2]), [0.5, -2 * lsb], "channel 2")
+    t.expectEqual(floats(0...1), 1, "cut to the upper limit")
+    left = [Float](repeating: 9, count: 5)
+    right = left
+    t.expectEqual(floats(4...5), 4, "padded to the lower limit")
+    t.expectEqual(Array(left[0..<4]) + Array(right[0..<4]), [-1, lsb, 0, 0, 0.5, -2 * lsb, 0, 0], "padded with silence")
+
     // Memory stays flat over a take. Holding every frame read until the take was done used up
     // the Mac's 16 GB on the first full card (2026-11-04).
     let frames = 40

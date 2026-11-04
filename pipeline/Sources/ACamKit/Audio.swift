@@ -25,6 +25,31 @@ enum CameraAudio {
         }
         return n
     }
+
+    /// Sample pairs kept from each frame at `nominal` pairs per frame: a frame with more than one
+    /// pair over is cut, one with more than one pair short is padded with silence (1,999 to 2,001
+    /// at 24 fps).
+    static func pairLimits(nominal: Double) -> ClosedRange<Int> {
+        Int((nominal - 1).rounded(.up))...Int((nominal + 1).rounded(.down))
+    }
+
+    /// Writes a frame's samples, cut or padded with silence to `limits`, as floats from -1 to 1
+    /// (sample / 32,768): channel 1 to `left`, channel 2 to `right`. Both need room for
+    /// `limits.upperBound` floats. Returns the pairs written.
+    static func floatSamples(inBlock block: UnsafeRawBufferPointer, limits: ClosedRange<Int>,
+                             left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>) -> Int {
+        let kept = min(pairCount(inBlock: block), limits.upperBound)
+        for k in 0..<kept {
+            left[k] = Float(Int16(littleEndian: block.loadUnaligned(fromByteOffset: 4 * k, as: Int16.self))) / 32_768
+            right[k] = Float(Int16(littleEndian: block.loadUnaligned(fromByteOffset: 4 * k + 2, as: Int16.self))) / 32_768
+        }
+        let total = max(kept, limits.lowerBound)
+        for k in kept..<total {
+            left[k] = 0
+            right[k] = 0
+        }
+        return total
+    }
 }
 
 /// RIFF/WAVE PCM with a Broadcast Wave `bext` chunk (EBU Tech 3285, version 1).
@@ -129,7 +154,8 @@ enum AudioTake {
             result.problems.append("no frame rate in \(firstName)")
             return result
         }
-        let low = Int((nominal - 1).rounded(.up)), high = Int((nominal + 1).rounded(.down))
+        let limits = CameraAudio.pairLimits(nominal: nominal)
+        let low = limits.lowerBound, high = limits.upperBound
 
         var pcm = Data()
         pcm.reserveCapacity(names.count * high * 4)
