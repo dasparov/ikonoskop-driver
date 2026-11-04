@@ -96,6 +96,8 @@ func runSecondCopyTests(_ t: TestContext) throws {
         }
         t.expect(try String(contentsOf: second.appendingPathComponent("REPORT.md"), encoding: .utf8).contains("| Second copy |"),
                  "the report describes the second copy")
+        let check = try CopyVerifier.verify(second)
+        t.expect(check.ok && check.takes.map { $0.files } == [5, 7, 3], "the second copy verifies on its own: \(check.takes)")
 
         // Without the drive the run is refused, not made with one copy: choosing single-drive
         // runs is up to the caller (the app leaves the second destination out).
@@ -157,7 +159,7 @@ func runSpaceTests(_ t: TestContext) throws {
     two.offload.secondDestination = s.second
     two.offload.destination = s.dir.appendingPathComponent("dest-two")
     try FileManager.default.createDirectory(at: two.offload.destination, withIntermediateDirectories: true)
-    try separateDrives(s.second) {
+    separateDrives(s.second) {
         let second = refusal(two) { job in job.freeSpace = { $0.path.hasPrefix(s.second.path) ? room : footage * 4 } }
         t.expect(second.contains("second copy"), "the second drive's space is checked: \(second)")
     }
@@ -232,6 +234,8 @@ func runAddMissingTests(_ t: TestContext) throws {
              "the kept take's row")
     t.expect(report.contains("`REPORT-1.md`"), "the report names the earlier one")
     t.expect(refusal(add).contains("nothing to add"), "a complete folder has nothing to add")
+    let check = try CopyVerifier.verify(folder)
+    t.expect(check.ok && check.takes.count == 3, "the card folder verifies after both runs: \(check.takes)")
 
     // An unfinished take folder (no checksum history) goes to the Trash and the take is copied.
     let u = try setUp(t, "add-unfinished")

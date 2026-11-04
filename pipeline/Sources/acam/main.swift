@@ -161,20 +161,9 @@ func offload(_ args: ArraySlice<String>) throws -> Int32 {
     let options = CardJobOptions(offload: offload, audio: !a.flag("--no-audio"), clean: !a.flag("--no-clean"),
                                  profile: try profile(a.value("--profile")), prores: try looks(a.value("--prores")))
     let job = CardJob(options)
-    // The first Ctrl-C stops the run cleanly; a second one quits at once.
-    signal(SIGINT, SIG_IGN)
-    let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
-    interrupt.setEventHandler {
-        if job.stop.isSet {
-            exit(130)
-        }
-        FileHandle.standardError.write(Data("\nacam: stopping (Ctrl-C again quits at once)…\n".utf8))
-        job.stop.set()
-    }
-    interrupt.resume()
     let result: CardJobResult
     do {
-        result = try job.run()
+        result = try interruptible(job.stop) { try job.run() }
     } catch is StoppedError {
         print("\nstopped: the copies were not verified yet, so this run kept nothing; the card still has every take")
         return 130
@@ -280,9 +269,17 @@ func verify(_ args: ArraySlice<String>) throws -> Int32 {
         throw UsageError(description: "name at least one card or take folder")
     }
     var ok = true
+    let stop = StopSignal()
     for path in a.positional {
-        let r = try CopyVerifier.verify(URL(fileURLWithPath: path), progress: { print($0) })
+        let r = try interruptible(stop) {
+            try KeepAwake.during("Checking \(path)") {
+                try CopyVerifier.verify(URL(fileURLWithPath: path), progress: { print($0) }, isCancelled: { stop.isSet })
+            }
+        }
         ok = ok && r.ok
+        if r.stopped {
+            print("stopped: not every file was checked")
+        }
         for t in r.takes {
             if t.ok {
                 print(String(format: "OK      %@  %d files  %.1f GB", t.name, t.files, Double(t.bytes) / 1e9))
@@ -300,6 +297,25 @@ func verify(_ args: ArraySlice<String>) throws -> Int32 {
     }
     print(ok ? "ALL MATCH" : "MISMATCH FOUND")
     return ok ? 0 : 1
+}
+
+/// Runs `body`; the first Ctrl-C sets `stop` (the job stops cleanly), a second one quits at once.
+func interruptible<T>(_ stop: StopSignal, _ body: () throws -> T) rethrows -> T {
+    signal(SIGINT, SIG_IGN)
+    let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+    interrupt.setEventHandler {
+        if stop.isSet {
+            exit(130)
+        }
+        FileHandle.standardError.write(Data("\nacam: stopping (Ctrl-C again quits at once)…\n".utf8))
+        stop.set()
+    }
+    interrupt.resume()
+    defer {
+        interrupt.cancel()
+        signal(SIGINT, SIG_DFL)
+    }
+    return try withExtendedLifetime(interrupt) { try body() }
 }
 
 func fail(_ message: String) -> Never {

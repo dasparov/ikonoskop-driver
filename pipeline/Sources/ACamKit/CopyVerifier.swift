@@ -177,28 +177,9 @@ enum CopyVerifier {
     /// xxHash64 and length of the file, read in chunks into `buffer` past the file cache, so the
     /// bytes come from the disk.
     static func hashFile(_ path: String, buffer: UnsafeMutableRawBufferPointer) throws -> (hash: UInt64, length: Int64) {
-        let fd = open(path, O_RDONLY)
-        guard fd >= 0 else {
-            throw FileIO.failure("open", path)
-        }
-        defer { close(fd) }
-        _ = fcntl(fd, F_NOCACHE, 1)
         var hasher = XXHash64()
-        var length: Int64 = 0
-        while true {
-            let n = Darwin.read(fd, buffer.baseAddress!, buffer.count)
-            if n < 0 {
-                if errno == EINTR {
-                    continue
-                }
-                throw FileIO.failure("read", path)
-            }
-            if n == 0 {
-                return (hasher.digest(), length)
-            }
-            hasher.update(UnsafeRawBufferPointer(rebasing: buffer[0..<n]))
-            length += Int64(n)
-        }
+        let length = try FileIO.stream(path, through: buffer) { hasher.update($0) }
+        return (hasher.digest(), length)
     }
 
     /// Regular files under `folder`, relative and '/'-separated, without ascmhl/ and hidden files.
