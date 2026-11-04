@@ -424,9 +424,17 @@ final class Offload {
         if let n = Int(card.name.filter { $0.isNumber }), n != eeprom.cardNumber {
             result.cardProblems.append("The EEPROM dump is from card \(eeprom.cardNumber), not \(card.name).")
         }
+        // The driver lists the valid entries before the first invalid one. Valid entries after it
+        // are either left over from earlier recordings on the card (older than every listed take,
+        // their flash partly reused) or takes the driver does not show (newer): a problem.
         let valid = eeprom.validTakes
+        let listed = valid.filter { $0.index < eeprom.listedCount }
+        let after = valid.filter { $0.index > eeprom.listedCount }
+        let newestListed = listed.map { $0.createdKey }.max()
+        let hidden = after.filter { newestListed == nil || $0.createdKey >= newestListed! }
+        let earlier = after.filter { newestListed != nil && $0.createdKey < newestListed! }
         var problems = 0
-        for entry in valid {
+        for entry in listed {
             let name = eeprom.folderName(index: entry.index)
             guard let i = result.takes.firstIndex(where: { $0.name == name }) else {
                 result.cardProblems.append("Take \(name) (\(entry.frames) frames in the take table) is missing from the card's volume.")
@@ -438,13 +446,21 @@ final class Offload {
                 problems += 1
             }
         }
-        for t in result.takes where !valid.contains(where: { eeprom.folderName(index: $0.index) == t.name }) {
+        for entry in hidden {
+            result.cardProblems.append("Take \(eeprom.folderName(index: entry.index)) (\(entry.frames) frames, recorded \(entry.createdText)) is in the take table after an empty entry and is not older than the listed takes, but it is missing from the card's volume: the driver shows only the takes before the first empty entry.")
+            problems += 1
+        }
+        for t in result.takes where !listed.contains(where: { eeprom.folderName(index: $0.index) == t.name }) {
             result.cardProblems.append("Take folder \(t.name) is not in the take table.")
             problems += 1
         }
-        let frames = valid.reduce(0) { $0 + $1.frames }
+        if let first = earlier.min(by: { $0.createdKey < $1.createdKey }),
+           let last = earlier.max(by: { $0.createdKey < $1.createdKey }) {
+            result.cardWarnings.append("The take table also keeps \(earlier.count) entries from earlier recordings on this card (\(first.createdText) to \(last.createdText)), after the end of the current list. They are older than every listed take, and the current takes were recorded over at least part of their flash. The driver does not show them, so they were not copied.")
+        }
+        let frames = listed.reduce(0) { $0 + $1.frames }
         result.takeTableSummary = problems == 0
-            ? "matches: \(valid.count) takes, \(frames) frames"
+            ? "matches: \(listed.count) takes, \(frames) frames" + (earlier.isEmpty ? "" : "; \(earlier.count) older entries from earlier recordings (see warnings)")
             : "\(problems) differences (see problems)"
     }
 

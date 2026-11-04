@@ -15,6 +15,18 @@ struct EepromTake: Equatable {
     let frameRateCode: Int
     let tungsten: Bool
     let monochrome: Bool
+    /// Creation time as stored: FAT time << 16 | FAT date.
+    let created: UInt32
+
+    /// Orders takes by creation time (FAT date before time).
+    var createdKey: UInt32 { (created & 0xffff) << 16 | created >> 16 }
+
+    /// "2019-12-04 13:16"
+    var createdText: String {
+        let t = created >> 16, d = created & 0xffff
+        return String(format: "%04d-%02d-%02d %02d:%02d", 1980 + Int(d >> 9), Int((d >> 5) & 15), Int(d & 31),
+                      Int(t >> 11), Int((t >> 5) & 63))
+    }
 }
 
 struct EepromImage {
@@ -75,8 +87,15 @@ struct EepromImage {
             }
             return EepromTake(index: i, frames: u16(e + 4), firstBlock: u16(e + 2),
                               frameRateCode: Int(bytes[e + 1] & 0x7f), tungsten: bytes[e + 1] & 0x80 != 0,
-                              monochrome: u16(e + 14) & 0xf == 0xe)
+                              monochrome: u16(e + 14) & 0xf == 0xe,
+                              created: UInt32(u16(e + 10)) | UInt32(u16(e + 12)) << 16)
         }
+    }
+
+    /// Number of valid entries before the first invalid one: the takes the driver lists.
+    var listedCount: Int {
+        (0..<EepromImage.maxTakes).first { bytes[EepromImage.takeTable + $0 * EepromImage.entryBytes] != 1 }
+            ?? EepromImage.maxTakes
     }
 
     /// Folder name the driver gives the take of entry `index`.

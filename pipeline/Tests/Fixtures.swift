@@ -7,6 +7,8 @@ struct FixtureTake {
     var seed: UInt64
     var fps = 24
     var start = Timecode(hours: 1, minutes: 0, seconds: 0, frames: 0)
+    /// Creation time in the take table: FAT time << 16 | FAT date (see `Fixture.fatTime`).
+    var created: UInt32 = 0
 }
 
 enum Fixture {
@@ -84,9 +86,19 @@ enum Fixture {
             b[e + 3] = 0
             b[e + 4] = UInt8(take.frames & 0xff)
             b[e + 5] = UInt8(take.frames >> 8)
+            for k in 0..<4 {
+                b[e + 10 + k] = UInt8(truncatingIfNeeded: take.created >> (8 * k))
+            }
             entry += 1
         }
         return hexDump(b)
+    }
+
+    /// A creation time as the take table stores it.
+    static func fatTime(_ year: Int, _ month: Int, _ day: Int, _ hour: Int, _ minute: Int) -> UInt32 {
+        let date = UInt32((year - 1980) << 9 | month << 5 | day)
+        let time = UInt32(hour << 11 | minute << 5)
+        return time << 16 | date
     }
 
     /// The format of tools/ikctl.c hexdump().

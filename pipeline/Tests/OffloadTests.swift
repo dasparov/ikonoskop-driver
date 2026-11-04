@@ -209,6 +209,21 @@ func offloadTakeTableTests(_ t: TestContext) throws {
     let r2 = try o.run()
     t.expect(!r2.allVerified && r2.cardProblems.contains { $0.contains("take table was not checked") },
              "missing EEPROM dump is reported: \(r2.cardProblems)")
+
+    // Entries after the empty one that are older than every listed take are left over from
+    // earlier recordings on the card: a warning, not a problem.
+    var current = takes
+    for i in current.indices {
+        current[i].created = Fixture.fatTime(2019, 12, 4, 13, 16 + i)
+    }
+    let old = [FixtureTake(frames: 7, seed: 500, created: Fixture.fatTime(2019, 11, 27, 11, 19)),
+               FixtureTake(frames: 9, seed: 600, created: Fixture.fatTime(2015, 10, 8, 14, 40))]
+    let s3 = try setUp(t, "take-table-history", eeprom: Fixture.eepromDump(number: 42, takes: current + old, invalid: [3]))
+    let r3 = try s3.job.run().offload
+    t.expect(r3.allVerified, "older entries are not problems: \(r3.cardProblems)")
+    t.expect(r3.cardWarnings.contains { $0.contains("2 entries from earlier recordings") && $0.contains("2015-10-08 14:40 to 2019-11-27 11:19") },
+             "summarised as a warning: \(r3.cardWarnings)")
+    t.expect(r3.takeTableSummary.contains("matches: 3 takes, 6 frames; 2 older entries"), r3.takeTableSummary)
 }
 
 func offloadKernelLogTests(_ t: TestContext) throws {
