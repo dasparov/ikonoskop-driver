@@ -43,6 +43,31 @@ func ascmhlTests(_ t: TestContext) throws {
     t.expect(xml.contains("<path size=\"3\" lastmodificationdate=\"1970-01-01T00:00:00+00:00\">a &amp; b.wav</path>"),
              "path escaped, size and date:\n\(xml)")
     t.expect(xml.contains("<xxh64 action=\"original\""), "xxh64 element")
+
+    // readGeneration gives back what manifestXML wrote, in order and to the second.
+    let entries = [entry,
+                   MHLEntry(path: "frames/10200001.DNG", size: 3_317_760, modified: Date(timeIntervalSince1970: 1_799_999_999),
+                            xxh64: 0x0123_4567_89ab_cdef, hashDate: Date(timeIntervalSince1970: 1_800_000_001)),
+                   MHLEntry(path: "clean/<odd>\"name\".DNG", size: 0, modified: Date(timeIntervalSince1970: 1_800_000_002),
+                            xxh64: .max, hashDate: Date(timeIntervalSince1970: 1_800_000_003))]
+    let generation = folder.appendingPathComponent("roundtrip.mhl")
+    try Data(ASCMHL.manifestXML(entries: entries, process: "transfer", created: Date()).utf8).write(to: generation)
+    let read = try ASCMHL.readGeneration(generation)
+    let fields = { (e: MHLEntry) in
+        "\(e.path)|\(e.size)|\(Int(e.modified.timeIntervalSince1970))|\(e.xxh64)|\(Int(e.hashDate.timeIntervalSince1970))"
+    }
+    t.expectEqual(read.map(fields), entries.map(fields), "generation round trip")
+
+    // A hash that is not 16 hex digits is refused.
+    try xml.replacingOccurrences(of: ">00000000000000ff<", with: ">00000000000000fg<")
+        .write(to: generation, atomically: true, encoding: .utf8)
+    var refused = ""
+    do {
+        _ = try ASCMHL.readGeneration(generation)
+    } catch {
+        refused = "\(error)"
+    }
+    t.expect(refused.contains("xxh64") && refused.contains("a & b.wav"), "invalid xxh64 refused: \(refused)")
 }
 
 func timecodeTests(_ t: TestContext) throws {

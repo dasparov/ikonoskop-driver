@@ -15,6 +15,7 @@ exit(runTests([
     TestSuite(name: "offload-kernel-log", run: offloadKernelLogTests),
     TestSuite(name: "offload-refuses-existing", run: offloadRefusesExistingTests),
     TestSuite(name: "offload-chosen-takes", run: offloadChosenTakesTests),
+    TestSuite(name: "verify-copy", run: verifyCopyTests),
     TestSuite(name: "losslessJPEG", run: losslessJPEGTests),
     TestSuite(name: "clean-dng", run: cleanDNGTests),
     TestSuite(name: "audio", run: audioTests),
