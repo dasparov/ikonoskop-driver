@@ -1,6 +1,7 @@
 // ACam: a small Mac app over the same CardJob that `acam offload` runs. Pick a mounted card and a
 // destination, choose the outputs, press Process card.
 import AppKit
+import CoreImage
 import SwiftUI
 
 @main
@@ -13,12 +14,28 @@ struct ACamApp: App {
     }
 }
 
-/// One take of the selected card, read from its first and last frame headers.
+/// One take of the selected card: its frame files and its first frame's header.
 struct TakeRow: Identifiable {
     let id: String
-    let frames: Int
+    let files: [URL]
     let fps: Double
-    let start: String
+    let startTimecode: Timecode?
+    let timecodeFPS: Int
+
+    var frames: Int { files.count }
+    var firstFrame: URL? { files.first }
+    var start: String { startTimecode?.description ?? "?" }
+    var duration: String { fps > 0 ? OffloadReport.duration(Double(frames) / fps) : "?" }
+
+    /// The timecode of frame `index`, counted on from the first frame's.
+    func timecode(at index: Int) -> String {
+        startTimecode.map { Timecode(frameCount: $0.frameCount(fps: timecodeFPS) + index, fps: timecodeFPS).description } ?? "?"
+    }
+}
+
+/// How the takes are shown: a table, or a grid of their first frames.
+enum TakeLayout: String {
+    case list, grid
 }
 
 final class CardModel: ObservableObject {
@@ -34,7 +51,16 @@ final class CardModel: ObservableObject {
     @Published var proresPreview = false
     @Published var checkTakeTable = true
     /// Colour profile id in the app's Resources/profiles/ (Phase 5); starts at the one picked.
-    @Published var profileID = ColourProfile.defaultID
+    @Published var profileID = ColourProfile.defaultID {
+        didSet { loadPreviews() }
+    }
+    /// Each take's first frame, developed like the Rec.709 ProRes preview in the chosen profile.
+    @Published var previews: [String: CGImage] = [:]
+    private var previewPass = 0
+    /// The take being previewed, shown in a sheet.
+    @Published var player: TakePlayer?
+    /// A message for the user, shown in an alert.
+    @Published var notice: String?
     let profiles: [(id: String, name: String)] = {
         guard let dir = Bundle.main.resourceURL?.appendingPathComponent("profiles"),
               let ids = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
@@ -82,6 +108,7 @@ final class CardModel: ObservableObject {
     /// that asks to allow access to removable volumes) must not freeze the window.
     private func loadTakes() {
         takes = []
+        previews = [:]
         guard let url = selected else {
             return
         }
@@ -101,16 +128,55 @@ final class CardModel: ObservableObject {
                     defer { h.closeFile() }
                     return try? FrameHeader(h.readData(ofLength: FrameHeader.headerBytes))
                 }
-                return TakeRow(id: take.name, frames: take.frames.count, fps: header?.fps ?? 0,
-                               start: header?.timecode?.description ?? "?")
+                return TakeRow(id: take.name, files: take.frames.map(\.url), fps: header?.fps ?? 0,
+                               startTimecode: header?.timecode, timecodeFPS: header?.timecodeFPS ?? 24)
             }
             DispatchQueue.main.async {
                 if self.selected == url {
                     self.takes = rows
                     self.status = ""
+                    self.loadPreviews()
                 }
             }
         }
+    }
+
+    /// Develops every take's first frame in the background, one at a time (3.4 MB read from the
+    /// card each); not while the card is being copied. A newer pass, for another card or colour
+    /// profile, makes older results stale.
+    private func loadPreviews() {
+        guard !running else {
+            return
+        }
+        previewPass += 1
+        let pass = previewPass
+        let jobs = takes.compactMap { t in t.firstFrame.map { (take: t.id, url: $0) } }
+        let folder = Bundle.main.resourceURL?.appendingPathComponent("profiles").appendingPathComponent(profileID)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let profile = folder.flatMap { try? ColourProfile.load($0).profile }
+            let context = CIContext()
+            for job in jobs {
+                let image = autoreleasepool {
+                    try? FramePreview.image(ofOriginal: Data(contentsOf: job.url), profile: profile, width: 512,
+                                            context: context)
+                }
+                DispatchQueue.main.async {
+                    if pass == self.previewPass, let image = image {
+                        self.previews[job.take] = image
+                    }
+                }
+            }
+        }
+    }
+
+    /// Opens the preview of `take`, read straight from the card; not while the card is being copied.
+    func openPreview(_ take: TakeRow) {
+        guard !running else {
+            notice = "The card is being copied. Previews are off until the copy has finished: a preview reads the card too, which would slow the copy down."
+            return
+        }
+        let folder = Bundle.main.resourceURL?.appendingPathComponent("profiles").appendingPathComponent(profileID)
+        player = TakePlayer(take: take, profile: folder.flatMap { try? ColourProfile.load($0).profile })
     }
 
     func chooseDestination() {
@@ -133,6 +199,9 @@ final class CardModel: ObservableObject {
         guard let source = selected, let destination = destination else {
             return
         }
+        // A preview reads the card too: the copy gets the card to itself.
+        player?.stop()
+        player = nil
         running = true
         verdict = nil
         report = ""
@@ -233,6 +302,7 @@ final class CardModel: ObservableObject {
 
 struct ContentView: View {
     @StateObject private var model = CardModel()
+    @AppStorage("takeLayout") private var layout = TakeLayout.list
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -246,18 +316,48 @@ struct ContentView: View {
                     }
                     .labelsHidden()
                     .frame(width: 220)
+                    .disabled(model.running)
                 }
-                Button("Refresh") { model.refreshCards() }
+                Button("Refresh") { model.refreshCards() }.disabled(model.running)
                 Spacer()
+                Picker("Show takes as", selection: $layout) {
+                    Text("List").tag(TakeLayout.list)
+                    Text("Grid").tag(TakeLayout.grid)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 120)
             }
-            Table(model.takes) {
-                TableColumn("Take", value: \.id)
-                TableColumn("Frames") { Text("\($0.frames)") }
-                TableColumn("Duration") { t in Text(t.fps > 0 ? OffloadReport.duration(Double(t.frames) / t.fps) : "?") }
-                TableColumn("Frame rate") { t in Text(t.fps > 0 ? String(format: "%g fps", t.fps) : "?") }
-                TableColumn("Start timecode", value: \.start)
+            switch layout {
+            case .list:
+                Table(model.takes) {
+                    TableColumn("First frame") { t in previewButton(t).frame(width: 96) }
+                        .width(104)
+                    TableColumn("Take", value: \.id)
+                    TableColumn("Frames") { Text("\($0.frames)") }
+                    TableColumn("Duration") { Text($0.duration) }
+                    TableColumn("Frame rate") { t in Text(t.fps > 0 ? String(format: "%g fps", t.fps) : "?") }
+                    TableColumn("Start timecode", value: \.start)
+                }
+                .frame(minHeight: 150)
+            case .grid:
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 14)], alignment: .leading, spacing: 14) {
+                        ForEach(model.takes) { t in
+                            VStack(alignment: .leading, spacing: 3) {
+                                previewButton(t)
+                                Text(t.id).font(.headline)
+                                Text("\(t.frames) frames · \(t.duration) · \(t.start)")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+                .frame(minHeight: 150)
             }
-            .frame(minHeight: 150)
+            if model.running {
+                Text("Previews are off while the card is being copied.").font(.caption).foregroundColor(.secondary)
+            }
 
             HStack {
                 Text("Destination").font(.headline).frame(width: 100, alignment: .leading)
@@ -279,6 +379,7 @@ struct ContentView: View {
                         ForEach(model.profiles, id: \.id) { Text($0.name).tag($0.id) }
                     }
                     .frame(width: 460)
+                    .disabled(model.running)
                 }
             }
             HStack {
@@ -311,5 +412,32 @@ struct ContentView: View {
             Spacer(minLength: 0)
         }
         .padding(18)
+        .sheet(item: $model.player) { PreviewView(player: $0) }
+        .alert("Preview is off", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(model.notice ?? "")
+        }
+    }
+
+    /// A take's first frame, or a grey box of the frame's shape until it is developed.
+    @ViewBuilder private func preview(_ take: String) -> some View {
+        if let image = model.previews[take] {
+            Image(decorative: image, scale: 1).resizable().aspectRatio(contentMode: .fit)
+        } else {
+            Rectangle().fill(Color.secondary.opacity(0.15))
+                .aspectRatio(CGFloat(Raw12.width) / CGFloat(Raw12.height), contentMode: .fit)
+        }
+    }
+
+    /// A take's first frame as a button that opens the take's preview.
+    private func previewButton(_ take: TakeRow) -> some View {
+        Button { model.openPreview(take) } label: {
+            preview(take.id).overlay(
+                Image(systemName: "play.circle.fill").font(.title2).foregroundColor(.white.opacity(0.85)).shadow(radius: 2)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Preview this take")
     }
 }

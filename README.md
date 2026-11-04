@@ -170,7 +170,8 @@ pipeline/build/acam offload --source "/Volumes/ACAM 000" --dest /Volumes/Backup 
 
 `--profile factory` keeps Ikonoskop's factory colour matrices instead of the sensor-data profile (`pipeline/colour/profiles/`).
 Or build the Mac app with `make app`, open `pipeline/build/ACam.app`, pick the card and a destination, and press
-**Process card**.
+**Process card**. The app shows each take's first frame (as a list or a grid); click one to play the take straight from
+the card before copying it. Previews are off while a card is being copied.
 
 ## Building and testing
 

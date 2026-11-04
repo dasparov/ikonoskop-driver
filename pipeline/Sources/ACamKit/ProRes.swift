@@ -52,6 +52,32 @@ enum ProResTake {
     /// Frames rendered at the same time (the RAW decode runs on the CPU, the rest on the GPU).
     static let batch = 8
 
+    /// Core Image's RAW engine set up for `look` on one DNG: sharpening, noise reduction, detail,
+    /// moire reduction, local tone mapping, contrast and lens correction off, exposure 0; the log
+    /// look also without tone curve, shadow bias or gamut mapping. The app's frame previews use the
+    /// same development.
+    static func develop(_ dng: Data, look: ProResLook) throws -> CIRAWFilter {
+        guard let raw = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else {
+            throw TIFFError("Core Image cannot open the DNG")
+        }
+        raw.sharpnessAmount = 0
+        raw.detailAmount = 0
+        raw.luminanceNoiseReductionAmount = 0
+        raw.colorNoiseReductionAmount = 0
+        raw.moireReductionAmount = 0
+        raw.localToneMapAmount = 0
+        raw.contrastAmount = 0
+        raw.isLensCorrectionEnabled = false
+        raw.exposure = 0
+        if look == .log {
+            raw.boostAmount = 0
+            raw.boostShadowAmount = 0
+            raw.shadowBias = 0
+            raw.isGamutMappingEnabled = false
+        }
+        return raw
+    }
+
     /// Renders <take>/clean/*.DNG (or <take>/frames/*.DNG when there is no clean/) to
     /// <outputDir>/<take>_<look.rawValue>.mov.
     static func run(take folder: URL, look: ProResLook, outputDir: URL,
@@ -243,25 +269,7 @@ private final class FrameRenderer {
 
     func render(_ url: URL, into pb: CVPixelBuffer) throws {
         // Camera DNGs (frames/) get the clean DNGs' black level, which Core Image reads from the header.
-        let dng = try CleanDNG.correctingBlackLevel(ofOriginal: Data(contentsOf: url))
-        guard let raw = CIRAWFilter(imageData: dng, identifierHint: "com.adobe.raw-image") else {
-            throw TIFFError("Core Image cannot open the DNG")
-        }
-        raw.sharpnessAmount = 0
-        raw.detailAmount = 0
-        raw.luminanceNoiseReductionAmount = 0
-        raw.colorNoiseReductionAmount = 0
-        raw.moireReductionAmount = 0
-        raw.localToneMapAmount = 0
-        raw.contrastAmount = 0
-        raw.isLensCorrectionEnabled = false
-        raw.exposure = 0
-        if look == .log {
-            raw.boostAmount = 0
-            raw.boostShadowAmount = 0
-            raw.shadowBias = 0
-            raw.isGamutMappingEnabled = false
-        }
+        let raw = try ProResTake.develop(CleanDNG.correctingBlackLevel(ofOriginal: Data(contentsOf: url)), look: look)
         guard var image = raw.outputImage else {
             throw TIFFError("Core Image cannot develop the DNG")
         }
