@@ -1,5 +1,5 @@
-// Whole-file reads and writes for the offload, bypassing the macOS file cache so that a
-// verification read comes from the card or disk, not from memory.
+// File reads and writes for the offload. Whole-file reads and writes bypass the macOS file cache,
+// so that a verification read comes from the card or disk, not from memory.
 import Foundation
 
 struct FileIOError: Error, CustomStringConvertible {
@@ -53,6 +53,31 @@ enum FileIO {
         var probe: UInt8 = 0
         if Darwin.read(fd, &probe, 1) > 0 {
             throw FileIOError(description: "\(path) is larger than \(buffer.count) bytes")
+        }
+        return total
+    }
+
+    /// Reads up to `buffer.count` bytes of `path` starting at `offset` and returns how many it
+    /// got (fewer at the end of the file).
+    static func read(_ path: String, at offset: Int, into buffer: UnsafeMutableRawBufferPointer) throws -> Int {
+        let fd = open(path, O_RDONLY)
+        guard fd >= 0 else {
+            throw failure("open", path)
+        }
+        defer { close(fd) }
+        var total = 0
+        while total < buffer.count {
+            let n = pread(fd, buffer.baseAddress! + total, buffer.count - total, off_t(offset + total))
+            if n < 0 {
+                if errno == EINTR {
+                    continue
+                }
+                throw failure("read", path)
+            }
+            if n == 0 {
+                break
+            }
+            total += n
         }
         return total
     }

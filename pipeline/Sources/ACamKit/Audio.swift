@@ -17,19 +17,13 @@ enum CameraAudio {
         frameRate.0 == 0 ? 0 : Double(sampleRate) * Double(frameRate.1) / Double(frameRate.0)
     }
 
-    /// The block's sample pairs up to the end marker (all 2,048 pairs if there is none).
-    static func pairs(inFrame file: Data) throws -> Data {
-        guard file.count >= blockOffset + blockBytes else {
-            throw TIFFError("the file has no audio block (\(file.count) bytes)")
-        }
-        let block = file.subdata(in: blockOffset..<blockOffset + blockBytes)
+    /// Sample pairs in a frame's audio block: up to the end marker (all 2,048 if there is none).
+    static func pairCount(inBlock block: UnsafeRawBufferPointer) -> Int {
         var n = 0
-        block.withUnsafeBytes { raw in
-            while n < blockBytes / 4 && raw.loadUnaligned(fromByteOffset: 4 * n, as: UInt32.self) != 0xffff_ffff {
-                n += 1
-            }
+        while n < block.count / 4 && block.loadUnaligned(fromByteOffset: 4 * n, as: UInt32.self) != 0xffff_ffff {
+            n += 1
         }
-        return block.prefix(4 * n)
+        return n
     }
 }
 
@@ -119,8 +113,14 @@ enum AudioTake {
             result.problems.append("no frames")
             return result
         }
-        let first = try Data(contentsOf: framesDir.appendingPathComponent(firstName))
-        let header = try FrameHeader(first.prefix(FrameHeader.headerBytes))
+        // One buffer for the first frame's header, then for each frame's audio block. Whole frames
+        // are never read: holding them until the take was done used up the Mac's memory.
+        let buffer = UnsafeMutableRawBufferPointer.allocate(
+            byteCount: max(FrameHeader.headerBytes, CameraAudio.blockBytes), alignment: 16)
+        defer { buffer.deallocate() }
+        let headerLength = try FileIO.read(framesDir.appendingPathComponent(firstName).path, at: 0,
+                                           into: UnsafeMutableRawBufferPointer(rebasing: buffer[0..<FrameHeader.headerBytes]))
+        let header = try FrameHeader(Data(bytes: buffer.baseAddress!, count: headerLength))
         result.frameRate = header.frameRate
         result.startTimecode = header.timecode
         let nominal = CameraAudio.nominalPairs(header.frameRate)
@@ -132,18 +132,22 @@ enum AudioTake {
 
         var pcm = Data()
         pcm.reserveCapacity(names.count * high * 4)
+        let block = UnsafeMutableRawBufferPointer(rebasing: buffer[0..<CameraAudio.blockBytes])
         for name in names {
-            let file = name == firstName ? first : try Data(contentsOf: framesDir.appendingPathComponent(name))
-            var pairs = try CameraAudio.pairs(inFrame: file)
-            let n = pairs.count / 4
+            let path = framesDir.appendingPathComponent(name).path
+            guard try FileIO.read(path, at: CameraAudio.blockOffset, into: block) == block.count else {
+                throw TIFFError("\(name) ends before its audio block")
+            }
+            let n = CameraAudio.pairCount(inBlock: UnsafeRawBufferPointer(block))
             if n > high {
                 result.warnings.append("\(name): \(n) sample pairs, kept \(high)")
-                pairs = pairs.prefix(4 * high)
             } else if n < low {
                 result.warnings.append("\(name): \(n) sample pairs, padded with silence to \(low)")
-                pairs.append(Data(count: 4 * (low - n)))
             }
-            pcm.append(pairs)
+            pcm.append(contentsOf: UnsafeRawBufferPointer(rebasing: block[0..<4 * min(n, high)]))
+            if n < low {
+                pcm.append(Data(count: 4 * (low - n)))
+            }
         }
         result.frames = names.count
         result.samplePairs = pcm.count / 4

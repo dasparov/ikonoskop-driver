@@ -37,6 +37,19 @@ private func chunks(_ wav: Data) -> [String: Data] {
     return out
 }
 
+/// The process's physical memory footprint (Activity Monitor's "Memory").
+private func physicalFootprint() -> Int64 {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+    let status = withUnsafeMutablePointer(to: &info) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+            task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+        }
+    }
+    precondition(status == KERN_SUCCESS, "task_info: \(status)")
+    return Int64(info.phys_footprint)
+}
+
 func audioTests(_ t: TestContext) throws {
     // Three frames at 24 fps, the second with the occasional extra pair.
     let counts = [2000, 2001, 2000]
@@ -79,4 +92,15 @@ func audioTests(_ t: TestContext) throws {
     let r2 = try AudioTake.run(take: odd)
     t.expectEqual(r2.samplePairs, 2001 + 1999, "clamped to the expected count")
     t.expectEqual(r2.warnings.count, 2, "both frames reported: \(r2.warnings)")
+
+    // Memory stays flat over a take. Holding every frame read until the take was done used up
+    // the Mac's 16 GB on the first full card (2026-11-04).
+    let frames = 40
+    let long = try take(t, "long", blocks: (0..<frames).map { pairs(from: 2000 * $0, count: 2000) })
+    let before = physicalFootprint()
+    let r3 = try AudioTake.run(take: long)
+    let grown = physicalFootprint() - before
+    t.expectEqual(r3.samplePairs, 2000 * frames)
+    t.expect(grown < Int64(frames * Offload.frameFileBytes / 4),
+             "memory grew \(grown / 1_000_000) MB over \(frames) frames")
 }

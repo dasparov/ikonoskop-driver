@@ -30,38 +30,42 @@ enum CleanTake {
         var entries: [MHLEntry?] = Array(repeating: nil, count: names.count)
         var done = 0
         let started = Date()
+        // A pool per frame: Data(contentsOf:) is autoreleased, and without one every frame read
+        // stayed in memory until the take was done.
         DispatchQueue.concurrentPerform(iterations: names.count) { i in
-            let name = names[i]
-            let out = cleanDir.appendingPathComponent(name)
-            do {
-                let original = try Data(contentsOf: framesDir.appendingPathComponent(name))
-                let made = try CleanDNG.make(fromOriginal: original, profile: profile)
-                try made.dng.withUnsafeBytes { try FileIO.create(out.path, bytes: $0) }
-                FileIO.evictCache(out.path)
-                let readBack = try Data(contentsOf: out, options: .uncached)
-                let decoded = try CleanDNG.samples(ofClean: readBack)
-                lock.lock()
-                defer { lock.unlock() }
-                if decoded != made.samples {
-                    result.problems.append("\(name): the clean DNG does not decode to the original pixels")
-                } else if readBack != made.dng {
-                    result.problems.append("\(name): the clean DNG on disk differs from what was written")
-                } else {
-                    result.originalBytes += original.count
-                    result.cleanBytes += readBack.count
-                    entries[i] = MHLEntry(path: "clean/\(name)", size: readBack.count, modified: Date(),
-                                          xxh64: XXHash64.hash(readBack), hashDate: Date())
+            autoreleasepool {
+                let name = names[i]
+                let out = cleanDir.appendingPathComponent(name)
+                do {
+                    let original = try Data(contentsOf: framesDir.appendingPathComponent(name))
+                    let made = try CleanDNG.make(fromOriginal: original, profile: profile)
+                    try made.dng.withUnsafeBytes { try FileIO.create(out.path, bytes: $0) }
+                    FileIO.evictCache(out.path)
+                    let readBack = try Data(contentsOf: out, options: .uncached)
+                    let decoded = try CleanDNG.samples(ofClean: readBack)
+                    lock.lock()
+                    defer { lock.unlock() }
+                    if decoded != made.samples {
+                        result.problems.append("\(name): the clean DNG does not decode to the original pixels")
+                    } else if readBack != made.dng {
+                        result.problems.append("\(name): the clean DNG on disk differs from what was written")
+                    } else {
+                        result.originalBytes += original.count
+                        result.cleanBytes += readBack.count
+                        entries[i] = MHLEntry(path: "clean/\(name)", size: readBack.count, modified: Date(),
+                                              xxh64: XXHash64.hash(readBack), hashDate: Date())
+                    }
+                    done += 1
+                    if done % 200 == 0 || done == names.count {
+                        progress(String(format: "clean  %@  %5d/%d frames  %.0f frames/s", folder.lastPathComponent,
+                                        done, names.count, Double(done) / max(Date().timeIntervalSince(started), 0.001)))
+                    }
+                } catch {
+                    lock.lock()
+                    result.problems.append("\(name): \(error)")
+                    done += 1
+                    lock.unlock()
                 }
-                done += 1
-                if done % 200 == 0 || done == names.count {
-                    progress(String(format: "clean  %@  %5d/%d frames  %.0f frames/s", folder.lastPathComponent,
-                                    done, names.count, Double(done) / max(Date().timeIntervalSince(started), 0.001)))
-                }
-            } catch {
-                lock.lock()
-                result.problems.append("\(name): \(error)")
-                done += 1
-                lock.unlock()
             }
         }
         result.frames = names.count
