@@ -99,7 +99,7 @@ Each phase ends with a **gate**: tests that must pass before moving on.
 
 #### Phase 0 results (2026-11-03): gate passed, waiting for approval
 
-- Private material is in `~/Documents/ikonoskop-private/` (`reference/` and `ikonoskop-driver-private-history.bundle`). `test/Makefile` looks for the original driver there.
+- Private material (Ikonoskop's original driver and its analysis) is kept outside the repo, in `../ikonoskop-private/`; `test/Makefile` looks for the original driver there.
 - Toolchain, recorded in the README: Command Line Tools 14.3 (Apple clang 14.0.3, macOS SDK 13.3, Swift 5.8). `unicorn==2.1.4` is pinned in `test/Makefile`.
 - The three DNG headers are now built by `core/ik_dng_templates.h` from a readable table of their tags, instead of copied bytes. They are byte-identical to the original driver's: `test/harness.cpp` checks their SHA-256 fingerprints on every run, and the differential test compares every header the driver serves (PASS).
 - `acam` is built with the Swift compiler directly (`make pipeline` → `pipeline/build/acam`). Swift's package manager (`swift build`) fails on this Mac because only the Command Line Tools are installed (known bug: swiftlang/swift-package-manager#7480). Installing Xcode would fix it; decision pending.

@@ -84,7 +84,7 @@ white-balanced 1.0 becomes ACES 1.0, so set exposure while grading.
 ## Regenerating
 
 ```
-P=/Users/kapil/anaconda3/bin/python3
+P=python3                                                # Python 3 with numpy
 $P pipeline/colour/build_profile.py                      # kai02150-ir650/<id>.dcp + fit.json
 $P pipeline/colour/build_profile.py --ir-cutoff 665      # kai02150-ir665/
 $P pipeline/colour/export_candidates.py                  # all three folders: profile.json, factory.dcp, IDTs, idt.json, config.ocio
