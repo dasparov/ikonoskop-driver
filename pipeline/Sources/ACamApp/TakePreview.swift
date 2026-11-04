@@ -451,7 +451,7 @@ struct PreviewView: View {
         let take = player.take
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(take.id).font(.headline)
+                Text(take.id).font(Brand.heading)
                 Text("\(take.frames) frames · \(take.duration) · from the card, not copied yet").foregroundColor(.secondary)
                 Spacer()
                 Button("Close", action: close).keyboardShortcut(.cancelAction)
@@ -489,10 +489,11 @@ struct PreviewView: View {
                 .help(muted ? "Sound on (M)" : "Sound off (M)")
             }
             Text(player.problem ?? "Plays with the camera's sound; the picture follows it. Stopped on a frame, it shows the frame at full resolution, without sound. Developed like the Rec.709 ProRes preview in the chosen colour profile. Space bar: play and pause. Arrow keys: one frame. M: sound off and on.")
-                .font(.caption)
+                .font(Brand.caption)
                 .foregroundColor(player.problem == nil ? .secondary : .red)
         }
         .padding(16)
+        .font(Brand.body)
         .frame(minWidth: 720, minHeight: 480)
         .onAppear {
             player.muted = muted

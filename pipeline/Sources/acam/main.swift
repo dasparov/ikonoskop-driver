@@ -268,34 +268,19 @@ func verify(_ args: ArraySlice<String>) throws -> Int32 {
     guard !a.positional.isEmpty else {
         throw UsageError(description: "name at least one card or take folder")
     }
-    var ok = true
+    var results: [CopyVerifyResult] = []
     let stop = StopSignal()
-    for path in a.positional {
+    for path in a.positional where !stop.isSet {
         let r = try interruptible(stop) {
             try KeepAwake.during("Checking \(path)") {
                 try CopyVerifier.verify(URL(fileURLWithPath: path), progress: { print($0) }, isCancelled: { stop.isSet })
             }
         }
-        ok = ok && r.ok
-        if r.stopped {
-            print("stopped: not every file was checked")
-        }
-        for t in r.takes {
-            if t.ok {
-                print(String(format: "OK      %@  %d files  %.1f GB", t.name, t.files, Double(t.bytes) / 1e9))
-            } else {
-                let counts = [(t.mismatched.count, "changed"), (t.missing.count, "missing"),
-                              (t.problems.count, t.problems.count == 1 ? "problem" : "problems")]
-                    .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
-                print("FAILED  \(t.name)  \(counts.joined(separator: ", "))")
-                t.mismatched.forEach { print("        changed: \($0)") }
-                t.missing.forEach { print("        missing: \($0)") }
-                t.problems.forEach { print("        problem: \($0)") }
-            }
-            t.unlisted.forEach { print("        warning: not in the checksum history: \($0)") }
-        }
+        r.lines.forEach { print($0) }
+        results.append(r)
     }
-    print(ok ? "ALL MATCH" : "MISMATCH FOUND")
+    let ok = results.count == a.positional.count && results.allSatisfy { $0.ok }
+    print(ok ? "ALL MATCH" : results.contains { $0.headline == "MISMATCH FOUND" } ? "MISMATCH FOUND" : "STOPPED")
     return ok ? 0 : 1
 }
 

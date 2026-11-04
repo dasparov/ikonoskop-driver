@@ -27,6 +27,34 @@ struct CopyVerifyResult {
     /// Cancelled before every take was checked.
     var stopped = false
     var ok: Bool { !stopped && !takes.isEmpty && takes.allSatisfy { $0.ok } }
+
+    /// ALL MATCH, MISMATCH FOUND or STOPPED.
+    var headline: String {
+        ok ? "ALL MATCH" : takes.contains { !$0.ok } ? "MISMATCH FOUND" : "STOPPED"
+    }
+
+    /// One line per take ("OK      AC102001  2765 files  9.3 GB", or FAILED with the files),
+    /// as `acam verify` prints it and the app shows it.
+    var lines: [String] {
+        var out: [String] = []
+        for t in takes {
+            if t.ok {
+                out.append(String(format: "OK      %@  %d files  %.1f GB", t.name, t.files, Double(t.bytes) / 1e9))
+            } else {
+                let counts = [(t.mismatched.count, "changed"), (t.missing.count, "missing"),
+                              (t.problems.count, t.problems.count == 1 ? "problem" : "problems")]
+                    .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
+                out.append("FAILED  \(t.name)  \(counts.joined(separator: ", "))")
+                out += t.mismatched.map { "        changed: \($0)" } + t.missing.map { "        missing: \($0)" }
+                    + t.problems.map { "        problem: \($0)" }
+            }
+            out += t.unlisted.map { "        warning: not in the checksum history: \($0)" }
+        }
+        if stopped {
+            out.append("stopped: not every file was checked")
+        }
+        return out
+    }
 }
 
 struct CopyVerifyError: Error, CustomStringConvertible {

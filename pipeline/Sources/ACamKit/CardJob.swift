@@ -14,6 +14,8 @@ struct CardJobOptions {
     var profile: (profile: ColourProfile, folder: URL)?
     /// ProRes 4444 XQ files in <card>/prores/, one per look and take.
     var prores: [ProResLook] = []
+    /// Added to the report's warnings, e.g. that the second drive was not connected.
+    var notes: [String] = []
 }
 
 struct CardJobResult {
@@ -100,18 +102,23 @@ final class CardJob {
         return plan
     }
 
-    /// Plans and runs the card, keeping the Mac awake. Stopped during the copy, it throws
-    /// StoppedError and keeps nothing of this run; stopped later, the result says so.
+    /// Plans and runs the card. Stopped during the copy, it throws StoppedError and keeps nothing
+    /// of this run; stopped later, the result says so.
     func run() throws -> CardJobResult {
-        let plan = try self.plan()
-        return try KeepAwake.during("Copying \(plan.card.name)") {
-            try run(plan)
+        try run(plan())
+    }
+
+    /// Runs a plan from `plan()`, keeping the Mac awake.
+    func run(_ plan: CardPlan) throws -> CardJobResult {
+        try KeepAwake.during("Copying \(plan.card.name)") {
+            try perform(plan)
         }
     }
 
-    private func run(_ plan: CardPlan) throws -> CardJobResult {
+    private func perform(_ plan: CardPlan) throws -> CardJobResult {
         let fm = FileManager.default
         var result = CardJobResult(offload: try offload.run(plan), profile: options.profile?.profile)
+        result.warnings = options.notes
         let cardFolder = result.offload.cardFolder
         for (name, kept) in plan.kept {
             let looks = ProResLook.allCases.filter { fm.fileExists(atPath: CardPlan.proresURL(cardFolder, name, $0).path) }
