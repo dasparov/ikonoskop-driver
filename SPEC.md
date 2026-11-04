@@ -239,7 +239,7 @@ Write corrected copies into `<take>/clean/`. Never modify the verified originals
 
 If I get a colour chart later, add a chart-based profile as option C in the same comparison. Nothing else needs to change.
 
-#### Phase 5 results (2026-11-03): steps 1–6 done, waiting for your pick
+#### Phase 5 results (2026-11-03): steps 1–7 done; you picked B-665
 
 - **Datasheets** downloaded (Kodak 2008 Rev 1.0 and Truesense 2012 Rev 2.0), kept out of git in `pipeline/colour/datasheet/`. The colour curves are vector drawings inside the PDFs, so they were read out exactly; the 2008 and 2012 sheets agree to within 0.002. Numbers: `pipeline/colour/data/kai02150_qe.csv` (380–780 nm, 10 nm steps). Check image: `work/phase5/qe_check.png`.
 - **Tool:** our own open-source profile builder, `pipeline/colour/build_profile.py` (numpy only), instead of dcamprof (not installed); no new dependency.
@@ -255,7 +255,8 @@ If I get a colour chart later, add a chart-based profile as option C in the same
   - At equal raw values, all four channels have the same temporal noise (measured from consecutive frames). A 10-step difference in black would add about 1.5 DN² to green at every brightness; there is none.
 
   So all four channels share one black level of about 90. The greens' 80 left about 10 extra steps of green in every shadow, multiplied by the sheets' exposure lift (up to 16×). Clean DNGs now say 90 for every channel (monochrome frames keep their 60, not measured); `acam prores` on camera DNGs uses the same value; the comparison renders too. The shared value is 90 ± about 2 (from the dark floor); a few seconds recorded with the lens cap on would pin it down. Scripts: `work/phase5/black_level_check.py`, `work/phase5/black_level_ptc.py`.
-- [ ] Step 7 waits for your pick from the corrected sheets: A, B-650 or B-665.
+- [x] Step 7 (2026-11-04): you picked **B-665** from the corrected sheets. `acam offload`, `acam clean` and the app now write its matrices into the clean DNGs by default (`--profile factory` keeps Ikonoskop's); the offload and the app also copy its DCP, ACES IDTs and OpenColorIO config to `<card>/colour/kai02150-ir665/`. ProRes is rendered from the clean DNGs, so it follows; ProRes made without clean DNGs still uses the camera's factory matrices.
+- [ ] Gate: the Resolve check is yours.
 
 ### Phase 6 — ProRes export and Mac app
 

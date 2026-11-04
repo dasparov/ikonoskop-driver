@@ -21,8 +21,9 @@ let help = """
                                                       ProRes 4444 XQ in <card>/prores/
           A card folder (made by offload) stands for all its takes.
 
-      --profile <id>  colour profile for the clean DNGs: factory (default), kai02150-ir650,
-                      kai02150-ir665 (pipeline/colour/profiles/), or a folder with profile.json.
+      --profile <id>  colour profile for the clean DNGs: kai02150-ir665 (default, picked in Phase 5),
+                      factory (Ikonoskop's matrices), kai02150-ir650 (pipeline/colour/profiles/),
+                      or a folder with profile.json.
       log = ACEScct for grading, preview = Rec.709.
 
     Options:
@@ -98,11 +99,10 @@ func readEepromWithSudo() throws -> String {
     return String(decoding: data, as: UTF8.self)
 }
 
-/// A profile id from pipeline/colour/profiles/, or a folder holding profile.json.
-func profile(_ name: String?) throws -> (profile: ColourProfile, folder: URL)? {
-    guard let name = name else {
-        return nil
-    }
+/// A profile id from pipeline/colour/profiles/ (default: the one picked in Phase 5), or a folder
+/// holding profile.json.
+func profile(_ name: String?) throws -> (profile: ColourProfile, folder: URL) {
+    let name = name ?? ColourProfile.defaultID
     let direct = URL(fileURLWithPath: name)
     if FileManager.default.fileExists(atPath: direct.appendingPathComponent("profile.json").path) {
         return try ColourProfile.load(direct)
@@ -199,7 +199,7 @@ func clean(_ args: ArraySlice<String>) throws -> Int32 {
     let chosen = try profile(a.value("--profile"))
     var ok = true
     for folder in try takeFolders(a.positional) {
-        let r = try CleanTake.run(take: folder, profile: chosen?.profile, progress: { print($0) })
+        let r = try CleanTake.run(take: folder, profile: chosen.profile, progress: { print($0) })
         ok = ok && !r.failed
         print(r.failed ? "clean  \(folder.lastPathComponent)  FAILED: \(r.problems.prefix(5).joined(separator: "; "))"
               : String(format: "clean  %@  %d frames, %.0f%% of the size, every frame decoded and compared",

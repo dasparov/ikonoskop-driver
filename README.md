@@ -158,7 +158,7 @@ Changes from Ikonoskop's v1.2 besides the Apple silicon port:
 |---|---|
 | Verified copy | `<card>/<take>/frames/`: every frame, read twice from the card and once from the copy, compared with xxHash64. Frames the card returns differently are read again until two reads match. An ASC MHL checksum history per take (`<take>/ascmhl/`) and `REPORT.md`, ending with ALL VERIFIED or PROBLEMS FOUND |
 | Audio | `<take>/<take>_Audio.wav`: the camera's 48 kHz 16-bit stereo sound, which is stored inside each frame, with the start timecode (BWF) |
-| Clean DNGs | `<take>/clean/`: Make and Model, valid colour tags, the black level corrected (the camera's header makes shadows green), lossless compression (about half the size), pixel-identical to the originals |
+| Clean DNGs | `<take>/clean/`: Make and Model, valid colour tags, the black level corrected (the camera's header makes shadows green), lossless compression (about half the size), pixel-identical to the originals. Colour: a profile built from the sensor's published data (`kai02150-ir665`), with its Lightroom DCP, ACES input transforms and OpenColorIO config in `<card>/colour/` |
 | ProRes (optional) | `<card>/prores/`: ProRes 4444 XQ, ACEScct log or Rec.709, with sound and timecode |
 
 On the command line (build it with `make pipeline`):
@@ -168,9 +168,9 @@ sudo tools/ikctl eeprom 0 0x2000 > eeprom.txt     # the card's take table, check
 pipeline/build/acam offload --source "/Volumes/ACAM 000" --dest /Volumes/Backup --eeprom eeprom.txt --prores both
 ```
 
-`--profile kai02150-ir665` gives the clean DNGs a colour profile built from the sensor's published data instead of the factory
-matrices (`pipeline/colour/`). Or build the Mac app with `make app`, open `pipeline/build/ACam.app`, pick the card and a
-destination, and press **Process card**.
+`--profile factory` keeps Ikonoskop's factory colour matrices instead of the sensor-data profile (`pipeline/colour/profiles/`).
+Or build the Mac app with `make app`, open `pipeline/build/ACam.app`, pick the card and a destination, and press
+**Process card**.
 
 ## Building and testing
 

@@ -1,7 +1,8 @@
 # A-Cam dII colour profiles
 
-**In short:** there are three folders, one per colour profile candidate. You choose one, and
-that folder holds everything needed to use it:
+**In short:** there are three folders, one per colour profile candidate. **`kai02150-ir665` was
+picked (2026-11-04)**: `acam` and the ACam app use it unless told otherwise. Each folder holds
+everything needed to use its profile:
 
 * in Adobe Camera Raw or Lightroom (the `.dcp` file);
 * in the clean DNG files (`profile.json`, read by the `acam` pipeline);
@@ -14,7 +15,7 @@ The scripts regenerate these files; do not edit them by hand.
 |---|---|---|
 | `factory/` | **A** | Ikonoskop's own matrices, as stored in every DNG the camera writes. Matrix 1 is for daylight (D55, 5500 K), matrix 2 for studio tungsten (3200 K). |
 | `kai02150-ir650/` | **B, version 1** | Built from the published sensor curves, assuming an infrared-cut filter at 650 nm. Matrix 1 is for tungsten (Standard A), matrix 2 for daylight (D65). |
-| `kai02150-ir665/` | **B, version 2** | The same, with the filter at 665 nm (tuned once; see `work/phase5/findings.md`). |
+| `kai02150-ir665/` | **B, version 2 (picked)** | The same, with the filter at 665 nm (tuned once; see `work/phase5/findings.md`). The default of `acam` and the app. |
 
 ## The files in each folder
 

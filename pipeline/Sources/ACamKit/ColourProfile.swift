@@ -3,6 +3,10 @@
 import Foundation
 
 struct ColourProfile: Decodable {
+    /// The profile picked in Phase 5 (2026-11-04), used when none is chosen: B, sensor data with the
+    /// IR cut at 665 nm.
+    static let defaultID = "kai02150-ir665"
+
     let id: String
     let name: String
     let calibrationIlluminant1: UInt16

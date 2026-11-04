@@ -33,8 +33,8 @@ final class CardModel: ObservableObject {
     @Published var proresLog = false
     @Published var proresPreview = false
     @Published var checkTakeTable = true
-    /// Colour profile id in the app's Resources/profiles/ (Phase 5).
-    @Published var profileID = "factory"
+    /// Colour profile id in the app's Resources/profiles/ (Phase 5); starts at the one picked.
+    @Published var profileID = ColourProfile.defaultID
     let profiles: [(id: String, name: String)] = {
         guard let dir = Bundle.main.resourceURL?.appendingPathComponent("profiles"),
               let ids = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
