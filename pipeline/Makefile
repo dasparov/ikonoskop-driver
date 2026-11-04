@@ -46,11 +46,12 @@ build/acam-tests: $(KIT) $(TESTS) $(XXHASH) $(CAMERA) $(BRIDGE) Tests/TestBridgi
 	  $(XXHASH) $(CAMERA) -o $@
 
 # The Mac app: the same ACamKit sources with a SwiftUI front end. Resources: tools/ikctl for the
-# take-table check and the Phase 5 colour profiles.
-build/ACam.app: $(KIT) $(APP) $(XXHASH) $(BRIDGE) Sources/ACamApp/Info.plist $(IKCTL) $(wildcard colour/profiles/*/*)
+# take-table check, the Phase 5 colour profiles and the icon (drawn by icon/make-icon.swift).
+build/ACam.app: $(KIT) $(APP) $(XXHASH) $(BRIDGE) Sources/ACamApp/Info.plist Sources/ACamApp/AppIcon.icns $(IKCTL) $(wildcard colour/profiles/*/*)
 	rm -rf $@
 	mkdir -p $@/Contents/MacOS $@/Contents/Resources/profiles
 	cp Sources/ACamApp/Info.plist $@/Contents/Info.plist
+	cp Sources/ACamApp/AppIcon.icns $@/Contents/Resources/AppIcon.icns
 	cp $(IKCTL) $@/Contents/Resources/ikctl
 	for p in colour/profiles/*/; do cp -R "$${p%/}" $@/Contents/Resources/profiles/; done
 	$(SWIFTC) $(SWIFTFLAGS) -parse-as-library -import-objc-header $(BRIDGE) -module-name ACam $(KIT) $(APP) \
