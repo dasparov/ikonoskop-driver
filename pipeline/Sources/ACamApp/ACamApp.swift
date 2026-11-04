@@ -57,8 +57,10 @@ final class CardModel: ObservableObject {
     /// Each take's first frame, developed like the Rec.709 ProRes preview in the chosen profile.
     @Published var previews: [String: CGImage] = [:]
     private var previewPass = 0
-    /// The take being previewed, shown in a sheet.
-    @Published var player: TakePlayer?
+    /// The open take preview: its player and window.
+    private var player: TakePlayer?
+    private var previewWindow: NSWindow?
+    private var previewObserver: NSObjectProtocol?
     /// A message for the user, shown in an alert.
     @Published var notice: String?
     let profiles: [(id: String, name: String)] = {
@@ -169,14 +171,47 @@ final class CardModel: ObservableObject {
         }
     }
 
-    /// Opens the preview of `take`, read straight from the card; not while the card is being copied.
+    /// Opens the preview of `take` in its own window, read straight from the card; not while the
+    /// card is being copied. An open preview of another take closes.
     func openPreview(_ take: TakeRow) {
         guard !running else {
             notice = "The card is being copied. Previews are off until the copy has finished: a preview reads the card too, which would slow the copy down."
             return
         }
+        closePreview()
         let folder = Bundle.main.resourceURL?.appendingPathComponent("profiles").appendingPathComponent(profileID)
-        player = TakePlayer(take: take, profile: folder.flatMap { try? ColourProfile.load($0).profile })
+        let player = TakePlayer(take: take, profile: folder.flatMap { try? ColourProfile.load($0).profile })
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: PreviewView.idealSize),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = "\(take.id): preview from the card"
+        window.isReleasedWhenClosed = false
+        window.collectionBehavior.insert(.fullScreenPrimary)
+        let content = NSHostingView(rootView: PreviewView(player: player, close: { [weak window] in window?.close() }))
+        content.sizingOptions = [.minSize]
+        window.contentView = content
+        window.center()
+        previewObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window,
+                                                                 queue: .main) { [weak self] _ in
+            self?.previewClosed()
+        }
+        self.player = player
+        previewWindow = window
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Closes the take preview window, if one is open.
+    private func closePreview() {
+        previewWindow?.close()
+    }
+
+    private func previewClosed() {
+        player?.stop()
+        player = nil
+        if let observer = previewObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        previewObserver = nil
+        previewWindow = nil
     }
 
     func chooseDestination() {
@@ -200,8 +235,10 @@ final class CardModel: ObservableObject {
             return
         }
         // A preview reads the card too: the copy gets the card to itself.
-        player?.stop()
-        player = nil
+        if previewWindow != nil {
+            closePreview()
+            notice = "The preview was closed: the card is being copied now. Previews are back when the copy has finished."
+        }
         running = true
         verdict = nil
         report = ""
@@ -412,7 +449,6 @@ struct ContentView: View {
             Spacer(minLength: 0)
         }
         .padding(18)
-        .sheet(item: $model.player) { PreviewView(player: $0) }
         .alert("Preview is off", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {

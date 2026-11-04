@@ -1,14 +1,18 @@
-// Take preview: plays one take straight from the card, before it is copied. Frames are developed
-// like the Rec.709 ProRes preview in the chosen colour profile, 1024 pixels wide, a batch at a time
-// ahead of the playhead (about 70 frames/s on an M1 Pro, reading the card at 3.4 MB per frame).
-// When developing falls behind real time, frames are skipped; the take never plays slower.
-// Picture only. While the card is being copied, the app opens no previews (CardModel.openPreview).
+// Take preview: plays one take straight from the card, before it is copied, in its own window.
+// Frames are developed like the Rec.709 ProRes preview in the chosen colour profile: 1024 pixels
+// wide while playing, a batch at a time ahead of the playhead (reading the card at 3.4 MB per
+// frame), and at full resolution (2048 pixels) when stopped on a frame. When developing falls
+// behind real time, frames are skipped; the take never plays slower. Picture only. While the card
+// is being copied, the app opens no previews and closes an open one (CardModel).
 import AppKit
 import CoreImage
 import SwiftUI
 
-final class TakePlayer: ObservableObject, Identifiable {
-    static let width = 1024
+final class TakePlayer: ObservableObject {
+    /// Development width while playing (about 44 frames/s on the M1 Pro, enough for real time) and
+    /// when stopped on a frame (full resolution, about 28 frames/s).
+    static let playWidth = 1024
+    static let stillWidth = Raw12.width
     static let batch = 8
 
     let take: TakeRow
@@ -49,7 +53,7 @@ final class TakePlayer: ObservableObject, Identifiable {
             guard isCurrent(g) else {
                 return
             }
-            let result = develop(i)
+            let result = develop(i, width: Self.stillWidth)
             DispatchQueue.main.async { [self] in
                 guard isCurrent(g) else {
                     return
@@ -70,7 +74,12 @@ final class TakePlayer: ObservableObject, Identifiable {
     }
 
     func togglePlay() {
-        playing ? stop() : play()
+        playing ? pause() : play()
+    }
+
+    /// Stops playing and shows the frame at full resolution.
+    func pause() {
+        seek(to: shown)
     }
 
     /// Plays in real time from the frame shown (from the start once the end was reached).
@@ -88,8 +97,8 @@ final class TakePlayer: ObservableObject, Identifiable {
         ready = [:]
         playing = true
         problem = nil
-        // Develop ahead of the playhead, a batch at a time and at most two batches ahead; frames the
-        // playhead has already passed are skipped.
+        // Develop ahead of the playhead, a batch at a time and at most one batch ahead (a frame is
+        // 9 MB); frames the playhead has already passed are skipped.
         work.async { [self] in
             var next = from
             while isCurrent(g) {
@@ -98,7 +107,7 @@ final class TakePlayer: ObservableObject, Identifiable {
                 if next >= count {
                     break
                 }
-                if next > head + 2 * Self.batch {
+                if next > head + Self.batch {
                     Thread.sleep(forTimeInterval: 0.005)
                     continue
                 }
@@ -106,7 +115,7 @@ final class TakePlayer: ObservableObject, Identifiable {
                 var developed = [Result<CGImage, Error>?](repeating: nil, count: indices.count)
                 let slots = NSLock()
                 DispatchQueue.concurrentPerform(iterations: indices.count) { k in
-                    let result = develop(indices[k])
+                    let result = develop(indices[k], width: Self.playWidth)
                     slots.lock()
                     developed[k] = result
                     slots.unlock()
@@ -157,11 +166,7 @@ final class TakePlayer: ObservableObject, Identifiable {
         }
         let pastEnd = Double(clock.from) + position - Double(count - 1)
         if shown == count - 1 || pastEnd > fps / 2 {
-            let last = shown
-            stop()
-            if last < count - 1 {
-                seek(to: count - 1)
-            }
+            seek(to: count - 1)
         }
     }
 
@@ -172,11 +177,11 @@ final class TakePlayer: ObservableObject, Identifiable {
         ready = [:]
     }
 
-    private func develop(_ index: Int) -> Result<CGImage, Error> {
+    private func develop(_ index: Int, width: Int) -> Result<CGImage, Error> {
         autoreleasepool {
             Result {
                 try FramePreview.image(ofOriginal: Data(contentsOf: take.files[index]), profile: profile,
-                                       width: Self.width, context: context)
+                                       width: width, context: context)
             }
         }
     }
@@ -199,10 +204,11 @@ final class TakePlayer: ObservableObject, Identifiable {
     }
 }
 
-/// The preview sheet: the picture, play/pause, one-frame steps, a scrubber and the timecode.
+/// The preview window's content: the picture, play/pause, one-frame steps, a scrubber and the
+/// timecode.
 struct PreviewView: View {
     @ObservedObject var player: TakePlayer
-    @Environment(\.dismiss) private var dismiss
+    let close: () -> Void
 
     var body: some View {
         let take = player.take
@@ -211,7 +217,7 @@ struct PreviewView: View {
                 Text(take.id).font(.headline)
                 Text("\(take.frames) frames · \(take.duration) · from the card, not copied yet").foregroundColor(.secondary)
                 Spacer()
-                Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Close", action: close).keyboardShortcut(.cancelAction)
             }
             ZStack {
                 Color.black
@@ -222,7 +228,7 @@ struct PreviewView: View {
                 }
             }
             .aspectRatio(CGFloat(Raw12.width) / CGFloat(Raw12.height), contentMode: .fit)
-            .frame(minWidth: 860)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             HStack(spacing: 10) {
                 Button { player.togglePlay() } label: {
                     Image(systemName: player.playing ? "pause.fill" : "play.fill").frame(width: 18)
@@ -245,7 +251,16 @@ struct PreviewView: View {
                 .foregroundColor(player.problem == nil ? .secondary : .red)
         }
         .padding(16)
+        .frame(minWidth: 720, minHeight: 480)
         .onAppear { player.seek(to: 0) }
-        .onDisappear { player.stop() }
+    }
+
+    /// The window's first size: about 90% of the screen, in the frame's shape plus room for the
+    /// title and the controls.
+    static var idealSize: CGSize {
+        let screen = NSScreen.main?.visibleFrame.size ?? CGSize(width: 1440, height: 900)
+        let chrome: CGFloat = 130
+        let width = min(screen.width * 0.9, (screen.height * 0.9 - chrome) * CGFloat(Raw12.width) / CGFloat(Raw12.height))
+        return CGSize(width: width, height: width * CGFloat(Raw12.height) / CGFloat(Raw12.width) + chrome)
     }
 }
