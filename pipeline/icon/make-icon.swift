@@ -1,6 +1,6 @@
-// Draws the ACam app icon: the A-Cam dII seen from its right side, as on Ikonoskop's product
-// sheet (2013): the long milled body with its side screen, connectors and red button, the grey
-// eyecup above it and a cine lens on the IMS mount, on a light rounded square.
+// Draws the ACam app icon: a television test card with colour bars, in the style of the Philips
+// PM5544 (white grid on black, a large circle with grey squares, a rainbow, colour bars, gratings,
+// grey steps), filling the macOS rounded square. Drawn on a 520 x 520 card, y pointing down.
 //
 //   cd pipeline/icon && /Library/Developer/CommandLineTools/usr/bin/swiftc -sdk \
 //     /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk make-icon.swift -o /tmp/make-icon && \
@@ -15,175 +15,117 @@ func colour(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
             blue: CGFloat(hex & 0xff) / 255, alpha: alpha)
 }
 
-/// A vertical gradient over `rect` through `stops` (position 0 = top).
-func fillVertical(_ c: CGContext, _ path: CGPath, _ rect: CGRect, _ stops: [(CGFloat, UInt32)]) {
-    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-                              colors: stops.map { colour($0.1) } as CFArray, locations: stops.map { $0.0 })!
+func fill(_ c: CGContext, _ hex: UInt32, _ x0: CGFloat, _ y0: CGFloat, _ x1: CGFloat, _ y1: CGFloat) {
+    c.setFillColor(colour(hex))
+    c.fill(CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0))
+}
+
+/// Vertical lines `pitch` apart (half white, half black) between x0 and x1: a grating.
+func grating(_ c: CGContext, _ x0: CGFloat, _ x1: CGFloat, _ y0: CGFloat, _ y1: CGFloat, pitch: CGFloat,
+             light: UInt32 = 0xffffff, dark: UInt32 = 0x000000) {
+    fill(c, dark, x0, y0, x1, y1)
+    var x = x0
+    while x < x1 {
+        fill(c, light, x, y0, min(x + pitch / 2, x1), y1)
+        x += pitch
+    }
+}
+
+/// The card, 520 x 520.
+func card(_ c: CGContext) {
+    fill(c, 0x000000, 0, 0, 520, 520)
+    // White grid, a line every 40.
+    for k in 0...13 {
+        let p = 1.5 + CGFloat(k) * 40
+        fill(c, 0xdcdcdc, p - 2, 0, p + 2, 520)
+        fill(c, 0xdcdcdc, 0, p - 2, 520, p + 2)
+    }
+
+    // Inside the circle.
     c.saveGState()
-    c.addPath(path)
+    c.addEllipse(in: CGRect(x: 21, y: 19, width: 480, height: 480))
     c.clip()
-    c.drawLinearGradient(gradient, start: CGPoint(x: rect.midX, y: rect.minY), end: CGPoint(x: rect.midX, y: rect.maxY),
+    // Top: white, with a black block in the middle.
+    fill(c, 0xffffff, 0, 0, 520, 80)
+    fill(c, 0x000000, 181, 40, 342, 80)
+    // Fine gratings under it.
+    grating(c, 143, 249, 80, 120, pitch: 4, light: 0xbdbdbd, dark: 0x5a5a5a)
+    grating(c, 249, 279, 80, 120, pitch: 2.5, light: 0xbdbdbd, dark: 0x5a5a5a)
+    grating(c, 279, 381, 80, 120, pitch: 3, light: 0xbdbdbd, dark: 0x5a5a5a)
+    // Grey squares on black.
+    fill(c, 0x000000, 0, 120, 520, 158)
+    for (x0, x1) in [(66, 92), (121, 147), (177, 203), (236, 262), (290, 316), (347, 373), (405, 431), (459, 485)] {
+        fill(c, 0xc1bfc2, CGFloat(x0), 122, CGFloat(x1), 156)
+    }
+    // Rainbow.
+    let stops: [(CGFloat, UInt32)] = [(40, 0xc8323a), (90, 0xd7913b), (120, 0xe8d64b), (150, 0xd6f351), (180, 0x93da46),
+                                      (210, 0x60c43c), (270, 0x59b393), (300, 0x5eb0da), (330, 0x5487de), (360, 0x3c47b5),
+                                      (390, 0x2b0d8a), (450, 0x8b1a87), (490, 0xb0288c)]
+    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: stops.map { colour($0.1) } as CFArray,
+                              locations: stops.map { ($0.0 - 21) / 480 })!
+    c.saveGState()
+    c.clip(to: CGRect(x: 0, y: 158, width: 520, height: 39))
+    c.drawLinearGradient(gradient, start: CGPoint(x: 21, y: 0), end: CGPoint(x: 501, y: 0),
                          options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
     c.restoreGState()
-}
-
-func rounded(_ r: CGRect, _ radius: CGFloat) -> CGPath {
-    CGPath(roundedRect: r, cornerWidth: radius, cornerHeight: radius, transform: nil)
-}
-
-/// A lens or mount section seen from the side: lit from above like a cylinder.
-func cylinder(_ c: CGContext, x: CGFloat, width: CGFloat, axis: CGFloat, height: CGFloat, radius: CGFloat = 6,
-              base: UInt32 = 0x161618, light: UInt32 = 0x3c3c41) {
-    let r = CGRect(x: x, y: axis - height / 2, width: width, height: height)
-    fillVertical(c, rounded(r, radius), r, [(0, base), (0.22, light), (0.5, base), (0.9, 0x0c0c0e), (1, 0x1e1e21)])
-}
-
-/// Thin vertical lines across a section: knurling or the gear teeth of a focus ring.
-func stripes(_ c: CGContext, x: CGFloat, width: CGFloat, axis: CGFloat, height: CGFloat, step: CGFloat, hex: UInt32) {
-    c.saveGState()
-    c.addPath(rounded(CGRect(x: x, y: axis - height / 2, width: width, height: height), 6))
-    c.clip()
-    c.setStrokeColor(colour(hex, 0.9))
-    c.setLineWidth(step * 0.4)
-    var px = x + step / 2
-    while px < x + width {
-        c.move(to: CGPoint(x: px, y: axis - height / 2))
-        c.addLine(to: CGPoint(x: px, y: axis + height / 2))
-        px += step
+    // Colour bars.
+    for (x0, x1, hex) in [(0, 102, 0xfaf260), (102, 182, 0x9192be), (182, 242, 0x73d64d), (242, 282, 0x000000),
+                          (282, 342, 0xc8598e), (342, 420, 0xe0392d), (420, 520, 0x422d76)] as [(CGFloat, CGFloat, UInt32)] {
+        fill(c, hex, x0, 197, x1, 241)
     }
-    c.strokePath()
+    // Black band with the horizontal centre line.
+    fill(c, 0x000000, 0, 241, 520, 281)
+    fill(c, 0xe6e6e6, 0, 258, 520, 261)
+    // Gratings: white on the left, finer to the middle; grey on the right.
+    fill(c, 0x000000, 0, 281, 520, 361)
+    grating(c, 84, 137, 281, 361, pitch: 7)
+    grating(c, 137, 190, 281, 361, pitch: 5)
+    grating(c, 190, 242, 281, 361, pitch: 3.5)
+    grating(c, 282, 335, 281, 361, pitch: 3.5, light: 0xa8a8a8, dark: 0x3c3c3c)
+    grating(c, 335, 388, 281, 361, pitch: 5, light: 0xa8a8a8, dark: 0x3c3c3c)
+    grating(c, 388, 441, 281, 361, pitch: 7, light: 0xa8a8a8, dark: 0x3c3c3c)
+    // Grey steps, black to white.
+    for (x0, x1, hex) in [(0, 102, 0x000000), (102, 182, 0x363336), (182, 262, 0x686868), (262, 342, 0x999999),
+                          (342, 422, 0xcecccf), (422, 520, 0xffffff)] as [(CGFloat, CGFloat, UInt32)] {
+        fill(c, hex, x0, 361, x1, 400)
+    }
+    // White band with a black block.
+    fill(c, 0xffffff, 0, 400, 520, 440)
+    fill(c, 0x000000, 141, 400, 382, 440)
+    // Bottom: blue, red, green.
+    fill(c, 0x000000, 0, 440, 520, 520)
+    fill(c, 0x2e6bf6, 141, 440, 241, 520)
+    fill(c, 0xe0382d, 241, 440, 281, 520)
+    fill(c, 0x366a32, 281, 440, 381, 520)
+    // The centre: a black bar with a white edge and a white line, across the bars and gratings.
+    fill(c, 0xffffff, 238, 197, 286, 326)
+    fill(c, 0x000000, 242, 201, 282, 322)
+    fill(c, 0xffffff, 260, 197, 263, 326)
     c.restoreGState()
 }
 
-/// The icon on a 1024 x 1024 canvas, y pointing down.
+/// The icon on a 1024 x 1024 canvas, y pointing down: the card in the macOS rounded square.
 func draw(_ c: CGContext) {
-    // Background: the macOS rounded square, light like the product sheet's paper, with its shadow.
     let tile = CGRect(x: 100, y: 100, width: 824, height: 824)
+    let shape = CGPath(roundedRect: tile, cornerWidth: 185, cornerHeight: 185, transform: nil)
     c.saveGState()
-    c.setShadow(offset: CGSize(width: 0, height: 10), blur: 22, color: colour(0x000000, 0.28))
-    c.addPath(rounded(tile, 185))
-    c.setFillColor(colour(0xe9e6e0))
+    c.setShadow(offset: CGSize(width: 0, height: 10), blur: 22, color: colour(0x000000, 0.35))
+    c.addPath(shape)
+    c.setFillColor(colour(0x000000))
     c.fillPath()
     c.restoreGState()
-    fillVertical(c, rounded(tile, 185), tile, [(0, 0xf7f5f1), (1, 0xd8d3ca)])
-
-    let axis: CGFloat = 556
-    let top: CGFloat = 461, bottom: CGFloat = 651
-    let rear: CGFloat = 150, front: CGFloat = 610
-
-    // Shadow on the ground.
-    let ground = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB),
-                            colors: [colour(0x000000, 0.30), colour(0x000000, 0)] as CFArray, locations: [0, 1])!
     c.saveGState()
-    c.translateBy(x: 515, y: 702)
-    c.scaleBy(x: 1, y: 0.07)
-    c.drawRadialGradient(ground, startCenter: .zero, startRadius: 0, endCenter: .zero, endRadius: 380, options: [])
-    c.restoreGState()
-
-    // Eyecup: grey rubber rising above the body, steep at the back, sloping toward the lens.
-    let cup = CGMutablePath()
-    cup.move(to: CGPoint(x: 322, y: top + 6))
-    cup.addCurve(to: CGPoint(x: 372, y: top - 78), control1: CGPoint(x: 318, y: top - 40), control2: CGPoint(x: 336, y: top - 74))
-    cup.addCurve(to: CGPoint(x: 492, y: top + 6), control1: CGPoint(x: 420, y: top - 84), control2: CGPoint(x: 480, y: top - 46))
-    cup.closeSubpath()
-    let cupBox = CGRect(x: 318, y: top - 84, width: 176, height: 90)
-    fillVertical(c, cup, cupBox, [(0, 0xb3b7bc), (0.45, 0x989ca1), (1, 0x75797e)])
-    c.saveGState()
-    c.addPath(cup)
+    c.addPath(shape)
     c.clip()
-    c.setStrokeColor(colour(0xffffff, 0.35))
-    c.setLineWidth(4)
-    c.move(to: CGPoint(x: 336, y: top - 40))
-    c.addCurve(to: CGPoint(x: 430, y: top - 66), control1: CGPoint(x: 350, y: top - 70), control2: CGPoint(x: 400, y: top - 76))
-    c.strokePath()
+    c.translateBy(x: tile.minX, y: tile.minY)
+    c.scaleBy(x: tile.width / 520, y: tile.height / 520)
+    card(c)
     c.restoreGState()
-
-    // Body: milled aluminium, black. The rear part is a little shallower than the front block,
-    // with a sloping step between them, as on the camera.
-    let step: CGFloat = bottom - 22
-    let body = CGMutablePath()
-    let r: CGFloat = 24
-    body.move(to: CGPoint(x: rear + r, y: top))
-    body.addLine(to: CGPoint(x: front - r, y: top))
-    body.addArc(tangent1End: CGPoint(x: front, y: top), tangent2End: CGPoint(x: front, y: top + r), radius: r)
-    body.addLine(to: CGPoint(x: front, y: bottom - r))
-    body.addArc(tangent1End: CGPoint(x: front, y: bottom), tangent2End: CGPoint(x: front - r, y: bottom), radius: r)
-    body.addLine(to: CGPoint(x: 492, y: bottom))
-    body.addCurve(to: CGPoint(x: 440, y: step), control1: CGPoint(x: 470, y: bottom), control2: CGPoint(x: 462, y: step))
-    body.addLine(to: CGPoint(x: rear + r, y: step))
-    body.addArc(tangent1End: CGPoint(x: rear, y: step), tangent2End: CGPoint(x: rear, y: step - r), radius: r)
-    body.addLine(to: CGPoint(x: rear, y: top + r))
-    body.addArc(tangent1End: CGPoint(x: rear, y: top), tangent2End: CGPoint(x: rear + r, y: top), radius: r)
-    body.closeSubpath()
-    let whole = CGRect(x: rear, y: top, width: front - rear, height: bottom - top)
-    fillVertical(c, body, whole, [(0, 0x34343a), (0.08, 0x232326), (0.6, 0x161618), (1, 0x0b0b0c)])
-    // Connector block under the rear, with the three Lemo sockets.
-    let connectors = CGRect(x: 190, y: step - 8, width: 118, height: 40)
-    fillVertical(c, rounded(connectors, 10), connectors, [(0, 0x1d1d20), (1, 0x0c0c0d)])
-    for i in 0..<3 {
-        let centre = CGPoint(x: connectors.minX + 27 + CGFloat(i) * 32, y: connectors.midY + 2)
-        c.setFillColor(colour(0x0a0a0b))
-        c.fillEllipse(in: CGRect(x: centre.x - 13, y: centre.y - 13, width: 26, height: 26))
-        c.setStrokeColor(colour(0xc4c7cb))
-        c.setLineWidth(4)
-        c.strokeEllipse(in: CGRect(x: centre.x - 11, y: centre.y - 11, width: 22, height: 22))
-    }
-    // Top edge highlight and the seam in front of the step.
-    c.setStrokeColor(colour(0x6a6a70, 0.8))
+    // A faint edge, so the black square stands out on a dark background.
+    c.addPath(CGPath(roundedRect: tile.insetBy(dx: 1.5, dy: 1.5), cornerWidth: 184, cornerHeight: 184, transform: nil))
+    c.setStrokeColor(colour(0xffffff, 0.18))
     c.setLineWidth(3)
-    c.move(to: CGPoint(x: rear + 22, y: top + 2.5))
-    c.addLine(to: CGPoint(x: front - 22, y: top + 2.5))
     c.strokePath()
-    c.setStrokeColor(colour(0x000000, 0.55))
-    c.setLineWidth(4)
-    c.move(to: CGPoint(x: 474, y: top + 10))
-    c.addLine(to: CGPoint(x: 474, y: bottom - 10))
-    c.strokePath()
-    c.setStrokeColor(colour(0x47474c, 0.7))
-    c.setLineWidth(2)
-    c.move(to: CGPoint(x: 478, y: top + 10))
-    c.addLine(to: CGPoint(x: 478, y: bottom - 10))
-    c.strokePath()
-    // Side screen, with a reflection.
-    let screen = CGRect(x: 200, y: 498, width: 76, height: 70)
-    fillVertical(c, rounded(screen, 7), screen, [(0, 0x52677a), (1, 0x223039)])
-    c.saveGState()
-    c.addPath(rounded(screen, 7))
-    c.clip()
-    c.setFillColor(colour(0xffffff, 0.14))
-    c.move(to: CGPoint(x: screen.minX, y: screen.minY))
-    c.addLine(to: CGPoint(x: screen.minX + 52, y: screen.minY))
-    c.addLine(to: CGPoint(x: screen.minX, y: screen.minY + 50))
-    c.fillPath()
-    c.restoreGState()
-    c.setStrokeColor(colour(0x050506))
-    c.setLineWidth(5)
-    c.addPath(rounded(screen.insetBy(dx: -4, dy: -4), 10))
-    c.strokePath()
-    // Red button on top, at the back.
-    let button = CGRect(x: 230, y: top - 13, width: 44, height: 17)
-    fillVertical(c, rounded(button, 5), button, [(0, 0xff4a5b), (1, 0xc41a2e)])
-
-    // IMS mount, knurled.
-    cylinder(c, x: front - 4, width: 46, axis: axis, height: 172)
-    stripes(c, x: front + 2, width: 36, axis: axis, height: 172, step: 7, hex: 0x2c2c30)
-    // Cine prime: rear barrel, blue band, aperture ring, focus gear, front barrel.
-    cylinder(c, x: 650, width: 44, axis: axis, height: 150)
-    cylinder(c, x: 692, width: 52, axis: axis, height: 192)
-    c.setFillColor(colour(0x2f6fd6))
-    c.fill(CGRect(x: 694, y: axis - 92, width: 7, height: 184))
-    cylinder(c, x: 742, width: 62, axis: axis, height: 218)
-    stripes(c, x: 744, width: 58, axis: axis, height: 218, step: 6, hex: 0x2b2b2f)
-    cylinder(c, x: 802, width: 80, axis: axis, height: 238, radius: 10, base: 0x18181a, light: 0x45454b)
-    // Distance and stop markings, yellow-green as on the lens in the product sheet.
-    c.setFillColor(colour(0xc6dd4a))
-    for (i, y) in stride(from: axis - 70, through: axis + 70, by: 20).enumerated() {
-        c.fill(CGRect(x: 708, y: y, width: i % 2 == 0 ? 18 : 11, height: 4))
-        c.fill(CGRect(x: 818, y: y + 8, width: i % 2 == 0 ? 26 : 15, height: 4))
-    }
-    // Front rim.
-    let rim = CGRect(x: 872, y: axis - 119, width: 12, height: 238)
-    fillVertical(c, rounded(rim, 5), rim, [(0, 0x55555b), (0.5, 0x232326), (1, 0x3a3a3f)])
 }
 
 func png(size: Int) -> Data {
