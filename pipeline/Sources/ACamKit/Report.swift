@@ -6,7 +6,7 @@ let acamVersion = "0.1.0"
 enum OffloadReport {
     static func markdown(_ job: CardJobResult) -> String {
         let r = job.offload
-        let verdict = job.allVerified ? "ALL VERIFIED" : "PROBLEMS FOUND"
+        let verdict = job.headline
         let frames = r.takes.reduce(0) { $0 + $1.files.count }
         let bytes = r.takes.reduce(0) { $0 + $1.bytes }
         let seconds = r.finished.timeIntervalSince(r.started)
@@ -22,7 +22,7 @@ enum OffloadReport {
         | Destination | `\(r.cardFolder.path)` |
         | Started | \(local(r.started)) |
         | Finished | \(local(r.finished)) (\(duration(seconds))) |
-        | Takes | \(r.takes.count) |
+        | Takes | \(r.notCopied.isEmpty ? "\(r.takes.count)" : "\(r.takes.count) of \(r.takes.count + r.notCopied.count) copied; **not copied: \(r.notCopied.joined(separator: ", "))**") |
         | Frames | \(grouped(frames)) (\(String(format: "%.1f", Double(bytes) / 1e9)) GB) |
         | Checksums | xxHash64 of each file read twice from the card and once from the copy |
         | Take table (EEPROM) | \(r.takeTableSummary) |
@@ -62,7 +62,8 @@ enum OffloadReport {
         problems += job.prores.sorted { $0.key < $1.key }.flatMap { k, looks in
             looks.sorted { $0.key.rawValue < $1.key.rawValue }.flatMap { look, p in p.problems.map { "\(k) ProRes \(look.rawValue): \($0)" } }
         }
-        var warnings = r.cardWarnings + r.takes.flatMap { t in t.warnings.map { "\(t.name): \($0)" } }
+        var warnings = r.notCopied.isEmpty ? [] : ["Only the chosen takes were copied: \(r.notCopied.joined(separator: ", ")) \(r.notCopied.count == 1 ? "is" : "are") still only on the card. Copy \(r.notCopied.count == 1 ? "it" : "them") before the card is reused."]
+        warnings += r.cardWarnings + r.takes.flatMap { t in t.warnings.map { "\(t.name): \($0)" } }
         warnings += job.audio.sorted { $0.key < $1.key }.flatMap { k, a in a.warnings.map { "\(k) audio: \($0)" } }
         warnings += job.prores.sorted { $0.key < $1.key }.flatMap { k, looks in
             looks.sorted { $0.key.rawValue < $1.key.rawValue }.flatMap { look, p in p.warnings.map { "\(k) ProRes \(look.rawValue): \($0)" } }

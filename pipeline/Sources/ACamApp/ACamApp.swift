@@ -21,6 +21,8 @@ struct TakeRow: Identifiable {
     let fps: Double
     let startTimecode: Timecode?
     let timecodeFPS: Int
+    /// Size of the take's files on the card.
+    let bytes: Int64
 
     var frames: Int { files.count }
     var firstFrame: URL? { files.first }
@@ -81,9 +83,16 @@ final class CardModel: ObservableObject {
     @Published var running = false
     @Published var fraction = 0.0
     @Published var status = ""
-    @Published var verdict: Bool?
+    @Published var verdict: CardJobResult.Verdict?
+    @Published var headline = ""
     @Published var report = ""
     @Published var cardFolder: URL?
+    /// Takes ticked for "Process selected takes"; cleared when another card is chosen.
+    @Published var chosenTakes: Set<String> = []
+    /// The card's flash and how much of it the takes use (CardSpace); nil until the card is read.
+    @Published var cardSpace: (total: Int64, used: Int64)?
+    /// Free space where the copy goes.
+    @Published var destinationFree: Int64?
 
     private var observers: [NSObjectProtocol] = []
     // Frames done per "<stage> <take>", and the work units each stage costs per frame.
@@ -117,6 +126,8 @@ final class CardModel: ObservableObject {
     private func loadTakes() {
         takes = []
         previews = [:]
+        chosenTakes = []
+        cardSpace = nil
         guard let url = selected else {
             return
         }
@@ -137,11 +148,16 @@ final class CardModel: ObservableObject {
                     return try? FrameHeader(h.readData(ofLength: FrameHeader.headerBytes))
                 }
                 return TakeRow(id: take.name, files: take.frames.map(\.url), fps: header?.fps ?? 0,
-                               startTimecode: header?.timecode, timecodeFPS: header?.timecodeFPS ?? 24)
+                               startTimecode: header?.timecode, timecodeFPS: header?.timecodeFPS ?? 24,
+                               bytes: Int64(take.frames.reduce(0) { $0 + $1.size }))
             }
+            let volume = (try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]))?.volumeTotalCapacity
+            let space = volume.map { (total: CardSpace.flashBytes(volumeBytes: Int64($0)),
+                                      used: CardSpace.usedBytes(takeFrames: card.takes.map { $0.frames.count })) }
             DispatchQueue.main.async {
                 if self.selected == url {
                     self.takes = rows
+                    self.cardSpace = space
                     self.status = ""
                     self.loadPreviews()
                 }
@@ -262,14 +278,34 @@ final class CardModel: ObservableObject {
         panel.message = "Choose the folder for this card. A new folder named after the card is made inside it."
         if panel.runModal() == .OK {
             destination = panel.url
+            refreshDestinationFree()
         }
+    }
+
+    /// Free space at the destination, shown next to it.
+    private func refreshDestinationFree() {
+        destinationFree = (try? destination?.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?
+            .volumeAvailableCapacity.map(Int64.init)
+    }
+
+    /// Bytes of footage a run copies (every take, or the chosen ones), and about how much it writes
+    /// with the chosen outputs.
+    func runSize(takes chosen: Set<String>?) -> (footage: Int64, written: Int64) {
+        let rows = takes.filter { chosen?.contains($0.id) ?? true }
+        let frames = rows.reduce(0) { $0 + $1.frames }
+        let footage = rows.reduce(Int64(0)) { $0 + $1.bytes }
+        let looks = [proresLog ? ProResLook.log : nil, proresPreview ? ProResLook.preview : nil].compactMap { $0 }
+        let written = CardSpace.estimatedRunBytes(frames: frames, frameFileBytes: frames > 0 ? footage / Int64(frames) : 0,
+                                                  audio: audio, clean: clean, looks: looks)
+        return (footage, written)
     }
 
     var canProcess: Bool {
         !running && selected != nil && destination != nil
     }
 
-    func process() {
+    /// Copies and checks every take of the card, or only `chosen` (the report then says PARTIAL).
+    func process(takes chosen: Set<String>? = nil) {
         guard let source = selected, let destination = destination else {
             return
         }
@@ -281,11 +317,12 @@ final class CardModel: ObservableObject {
         }
         running = true
         verdict = nil
+        headline = ""
         report = ""
         cardFolder = nil
         fraction = 0
         done = [:]
-        let frames = Double(takes.reduce(0) { $0 + $1.frames })
+        let frames = Double(takes.filter { chosen?.contains($0.id) ?? true }.reduce(0) { $0 + $1.frames })
         var perFrame = weights["copy"]! + weights["verify"]!
         perFrame += clean ? weights["clean"]! : 0
         perFrame += Double([proresLog, proresPreview].filter { $0 }.count) * weights["prores"]!
@@ -302,7 +339,8 @@ final class CardModel: ObservableObject {
                     eepromText = try Self.readEepromWithAdminPrompt()
                 }
                 let offload = OffloadOptions(source: source, destination: destination,
-                                             eeprom: try eepromText.map(EepromImage.parseHexDump), eepromText: eepromText)
+                                             eeprom: try eepromText.map(EepromImage.parseHexDump), eepromText: eepromText,
+                                             takes: chosen)
                 let profile = try profileFolder.map(ColourProfile.load)
                 let job = CardJob(CardJobOptions(offload: offload, audio: options.0, clean: options.1,
                                                  profile: profile, prores: looks))
@@ -313,11 +351,13 @@ final class CardModel: ObservableObject {
                 let reportURL = result.offload.cardFolder.appendingPathComponent("REPORT.md")
                 let text = (try? String(contentsOf: reportURL, encoding: .utf8)) ?? ""
                 DispatchQueue.main.async {
-                    self.finish(verdict: result.allVerified, report: text, folder: result.offload.cardFolder)
+                    self.finish(verdict: result.verdict, headline: result.headline, report: text,
+                                folder: result.offload.cardFolder)
                 }
             } catch {
                 DispatchQueue.main.async {
-                    self.finish(verdict: false, report: "Could not process the card:\n\n\(error)", folder: nil)
+                    self.finish(verdict: .problems, headline: "PROBLEMS FOUND", report: "Could not process the card:\n\n\(error)",
+                                folder: nil)
                 }
             }
         }
@@ -339,13 +379,15 @@ final class CardModel: ObservableObject {
         fraction = min(units / totalUnits, 1)
     }
 
-    private func finish(verdict: Bool, report: String, folder: URL?) {
+    private func finish(verdict: CardJobResult.Verdict, headline: String, report: String, folder: URL?) {
         running = false
         fraction = folder == nil ? 0 : 1
         self.verdict = verdict
+        self.headline = headline
         self.report = report
         cardFolder = folder
         status = folder == nil ? "Stopped." : "Done."
+        refreshDestinationFree()
     }
 
     func showInFinder() {
@@ -380,124 +422,208 @@ final class CardModel: ObservableObject {
 struct ContentView: View {
     @StateObject private var model = CardModel()
     @AppStorage("takeLayout") private var layout = TakeLayout.list
+    @State private var confirmingSelection = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Card").font(.headline).frame(width: 100, alignment: .leading)
-                if model.cards.isEmpty {
-                    Text("No A-Cam card mounted. Connect the reader and insert a card.").foregroundColor(.secondary)
-                } else {
-                    Picker("", selection: $model.selected) {
-                        ForEach(model.cards, id: \.self) { Text($0.lastPathComponent).tag(Optional($0)) }
-                    }
-                    .labelsHidden()
-                    .frame(width: 220)
-                    .disabled(model.running)
-                }
-                Button("Refresh") { model.refreshCards() }.disabled(model.running)
-                Button { model.eject() } label: { Label("Eject", systemImage: "eject") }
-                    .disabled(model.selected == nil)
-                    .help("Eject the card, then take it out of the reader")
-                Spacer()
-                Picker("Show takes as", selection: $layout) {
-                    Text("List").tag(TakeLayout.list)
-                    Text("Grid").tag(TakeLayout.grid)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 120)
+            cardRow
+            if !model.takes.isEmpty {
+                cardSummary
             }
-            switch layout {
-            case .list:
-                Table(model.takes) {
-                    TableColumn("First frame") { t in previewButton(t).frame(width: 96) }
-                        .width(104)
-                    TableColumn("Take", value: \.id)
-                    TableColumn("Frames") { Text("\($0.frames)") }
-                    TableColumn("Duration") { Text($0.duration) }
-                    TableColumn("Frame rate") { t in Text(t.fps > 0 ? String(format: "%g fps", t.fps) : "?") }
-                    TableColumn("Start timecode", value: \.start)
-                }
-                .frame(minHeight: 150)
-            case .grid:
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 14)], alignment: .leading, spacing: 14) {
-                        ForEach(model.takes) { t in
-                            VStack(alignment: .leading, spacing: 3) {
-                                previewButton(t)
-                                Text(t.id).font(.headline)
-                                Text("\(t.frames) frames · \(t.duration) · \(t.start)")
-                                    .font(.caption).foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                }
-                .frame(minHeight: 150)
-            }
+            takesView
             if model.running {
                 Text("Previews are off while the card is being copied.").font(.caption).foregroundColor(.secondary)
             }
-
-            HStack {
-                Text("Destination").font(.headline).frame(width: 100, alignment: .leading)
-                Text(model.destination?.path ?? "none chosen").foregroundColor(model.destination == nil ? .secondary : .primary)
-                    .lineLimit(1).truncationMode(.middle)
-                Spacer()
-                Button("Choose…") { model.chooseDestination() }
-            }
-            HStack(alignment: .top) {
-                Text("Outputs").font(.headline).frame(width: 100, alignment: .leading)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Verified copies, checksums (ASC MHL) and a report: always")
-                    Toggle("Audio as WAV", isOn: $model.audio)
-                    Toggle("Clean DNGs (corrected, losslessly compressed)", isOn: $model.clean)
-                    Toggle("ProRes 4444 XQ, ACEScct log (for grading)", isOn: $model.proresLog)
-                    Toggle("ProRes 4444 XQ, Rec.709 preview", isOn: $model.proresPreview)
-                    Toggle("Check the card's take table (asks for your password)", isOn: $model.checkTakeTable)
-                    Picker("Colour profile", selection: $model.profileID) {
-                        ForEach(model.profiles, id: \.id) { Text($0.name).tag($0.id) }
-                    }
-                    .frame(width: 460)
-                    .disabled(model.running)
-                }
-            }
-            HStack {
-                Button(action: model.process) {
-                    Text("Process card").frame(minWidth: 140)
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!model.canProcess)
-                ProgressView(value: model.fraction)
-                Text(String(format: "%.0f%%", model.fraction * 100)).monospacedDigit().frame(width: 44)
+            destinationRow
+            outputsRow
+            Group {
+                processRow
+                runSizeLine
             }
             Text(model.status).font(.system(.caption, design: .monospaced)).foregroundColor(.secondary).lineLimit(1)
-
-            if let ok = model.verdict {
-                HStack {
-                    Text(ok ? "ALL VERIFIED" : "PROBLEMS FOUND")
-                        .font(.title2.bold())
-                        .foregroundColor(ok ? .green : .red)
-                    Spacer()
-                    Button("Show in Finder") { model.showInFinder() }.disabled(model.cardFolder == nil)
-                }
-                ScrollView {
-                    Text(model.report)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .border(Color.secondary.opacity(0.3))
-            }
+            resultView
             Spacer(minLength: 0)
         }
         .padding(18)
-        .alert(model.notice?.title ?? "", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } }),
-               presenting: model.notice) { _ in
+        .alert(model.notice?.title ?? "", isPresented: noticeShown, presenting: model.notice) { _ in
             Button("OK", role: .cancel) {}
         } message: { notice in
             Text(notice.message)
         }
+        .confirmationDialog(confirmTitle, isPresented: $confirmingSelection) {
+            Button(confirmButton) { model.process(takes: model.chosenTakes) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(confirmMessage)
+        }
+    }
+
+    private var cardRow: some View {
+        HStack {
+            Text("Card").font(.headline).frame(width: 100, alignment: .leading)
+            if model.cards.isEmpty {
+                Text("No A-Cam card mounted. Connect the reader and insert a card.").foregroundColor(.secondary)
+            } else {
+                Picker("", selection: $model.selected) {
+                    ForEach(model.cards, id: \.self) { Text($0.lastPathComponent).tag(Optional($0)) }
+                }
+                .labelsHidden()
+                .frame(width: 220)
+                .disabled(model.running)
+            }
+            Button("Refresh") { model.refreshCards() }.disabled(model.running)
+            Button { model.eject() } label: { Label("Eject", systemImage: "eject") }
+                .disabled(model.selected == nil)
+                .help("Eject the card, then take it out of the reader")
+            Spacer()
+            Picker("Show takes as", selection: $layout) {
+                Text("List").tag(TakeLayout.list)
+                Text("Grid").tag(TakeLayout.grid)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 120)
+        }
+    }
+
+    @ViewBuilder private var takesView: some View {
+        switch layout {
+        case .list:
+            takesTable
+        case .grid:
+            takesGrid
+        }
+    }
+
+    private var takesTable: some View {
+        Table(model.takes) {
+            TableColumn("Select") { t in Toggle("", isOn: chosen(t.id)).labelsHidden().disabled(model.running) }
+                .width(44)
+            TableColumn("First frame") { t in previewButton(t).frame(width: 96) }
+                .width(104)
+            TableColumn("Take", value: \.id)
+            TableColumn("Frames") { Text("\($0.frames)") }
+            TableColumn("Duration") { Text($0.duration) }
+            TableColumn("Size") { Text(Self.size($0.bytes)) }
+            TableColumn("Frame rate") { t in Text(t.fps > 0 ? String(format: "%g fps", t.fps) : "?") }
+            TableColumn("Start timecode", value: \.start)
+        }
+        .frame(minHeight: 150)
+    }
+
+    private var takesGrid: some View {
+        ScrollView {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 14)], alignment: .leading, spacing: 14) {
+                ForEach(model.takes) { t in
+                    gridCell(t)
+                }
+            }
+        }
+        .frame(minHeight: 150)
+    }
+
+    private func gridCell(_ t: TakeRow) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            previewButton(t)
+            Toggle(isOn: chosen(t.id)) { Text(t.id).font(.headline) }
+                .disabled(model.running)
+                .help("Tick to include this take in Process selected takes")
+            Text(Self.caption(t))
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var destinationRow: some View {
+        HStack {
+            Text("Destination").font(.headline).frame(width: 100, alignment: .leading)
+            Text(model.destination?.path ?? "none chosen")
+                .foregroundColor(model.destination == nil ? .secondary : .primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let free = model.destinationFree {
+                Text(Self.size(free) + " free").foregroundColor(.secondary)
+            }
+            Spacer()
+            Button("Choose…") { model.chooseDestination() }
+        }
+    }
+
+    private var outputsRow: some View {
+        HStack(alignment: .top) {
+            Text("Outputs").font(.headline).frame(width: 100, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Verified copies, checksums (ASC MHL) and a report: always")
+                Toggle("Audio as WAV", isOn: $model.audio)
+                Toggle("Clean DNGs (corrected, losslessly compressed)", isOn: $model.clean)
+                Toggle("ProRes 4444 XQ, ACEScct log (for grading)", isOn: $model.proresLog)
+                Toggle("ProRes 4444 XQ, Rec.709 preview", isOn: $model.proresPreview)
+                Toggle("Check the card's take table (asks for your password)", isOn: $model.checkTakeTable)
+                Picker("Colour profile", selection: $model.profileID) {
+                    ForEach(model.profiles, id: \.id) { Text($0.name).tag($0.id) }
+                }
+                .frame(width: 460)
+                .disabled(model.running)
+            }
+        }
+    }
+
+    private var processRow: some View {
+        HStack {
+            Button(action: { model.process() }) {
+                Text("Process card").frame(minWidth: 140)
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(!model.canProcess)
+            .help("Copy and check every take on the card")
+            Button(selectedButtonTitle) { confirmingSelection = true }
+                .disabled(!model.canProcess || model.chosenTakes.isEmpty)
+                .help("Copy and check only the ticked takes")
+            ProgressView(value: model.fraction)
+            Text(String(format: "%.0f%%", model.fraction * 100)).monospacedDigit().frame(width: 44)
+        }
+    }
+
+    @ViewBuilder private var resultView: some View {
+        if let verdict = model.verdict {
+            HStack {
+                Text(model.headline)
+                    .font(.title2.bold())
+                    .foregroundColor(Self.colour(verdict))
+                Spacer()
+                Button("Show in Finder") { model.showInFinder() }.disabled(model.cardFolder == nil)
+            }
+            ScrollView {
+                Text(model.report)
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .border(Color.secondary.opacity(0.3))
+        }
+    }
+
+    private var noticeShown: Binding<Bool> {
+        Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })
+    }
+
+    private var selectedButtonTitle: String {
+        let n = model.chosenTakes.count
+        return n == 0 ? "Process selected takes…" : "Process \(n) selected take\(n == 1 ? "" : "s")…"
+    }
+
+    private var confirmTitle: String {
+        "Copy only \(model.chosenTakes.count) of \(model.takes.count) takes?"
+    }
+
+    private var confirmButton: String {
+        let n = model.chosenTakes.count
+        return "Copy \(n) take\(n == 1 ? "" : "s")"
+    }
+
+    private var confirmMessage: String {
+        let rest = model.takes.count - model.chosenTakes.count
+        return "The other \(rest) take\(rest == 1 ? "" : "s") will stay only on the card: copy \(rest == 1 ? "it" : "them") too before the card is reused. The report will say PARTIAL."
     }
 
     /// A take's first frame, or a grey box of the frame's shape until it is developed.
@@ -519,5 +645,119 @@ struct ContentView: View {
         }
         .buttonStyle(.plain)
         .help("Preview this take")
+    }
+
+    /// Whether a take is ticked for "Process selected takes".
+    private func chosen(_ take: String) -> Binding<Bool> {
+        Binding(get: { model.chosenTakes.contains(take) },
+                set: { on in
+                    if on {
+                        model.chosenTakes.insert(take)
+                    } else {
+                        model.chosenTakes.remove(take)
+                    }
+                })
+    }
+
+    /// "9 takes · 10 min 10 s · 49.3 GB of footage", and how full the card is.
+    private var cardSummary: some View {
+        HStack(spacing: 10) {
+            Color.clear.frame(width: 100, height: 1)
+            Text(footageText)
+            if let full = cardFullFraction {
+                ProgressView(value: full).frame(width: 90)
+                Text(cardFullText)
+            }
+        }
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+
+    private var footageText: String {
+        let footage = model.takes.reduce(Int64(0)) { $0 + $1.bytes }
+        let seconds = model.takes.reduce(0.0) { $0 + ($1.fps > 0 ? Double($1.frames) / $1.fps : 0) }
+        let n = model.takes.count
+        return "\(n) take\(n == 1 ? "" : "s") · \(Self.minutes(seconds)) · \(Self.size(footage)) of footage"
+    }
+
+    private var cardFullFraction: Double? {
+        guard let space = model.cardSpace, space.total > 0 else {
+            return nil
+        }
+        return min(Double(space.used) / Double(space.total), 1)
+    }
+
+    private var cardFullText: String {
+        guard let space = model.cardSpace, let full = cardFullFraction else {
+            return ""
+        }
+        let fps = model.takes.first.map { $0.fps > 0 ? $0.fps : 24 } ?? 24
+        let left = Double(max(space.total - space.used, 0)) / Double(CardSpace.flashFrameBytes) / fps
+        let percent = Int((full * 100).rounded())
+        return "card \(percent)% full (\(Self.size(space.used)) of \(Self.size(space.total))), about \(Self.minutes(left)) of recording left at \(String(format: "%g", fps)) fps"
+    }
+
+    /// What a run copies and about how much it writes, and whether that fits at the destination.
+    @ViewBuilder private var runSizeLine: some View {
+        if !model.takes.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(runSizeText)
+                if let warning = spaceWarning {
+                    Text(warning).foregroundColor(.orange)
+                }
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+    }
+
+    private var runSizeText: String {
+        let all = model.runSize(takes: nil)
+        var text = "Process card copies \(Self.size(all.footage)) and writes about \(Self.size(all.written)) with these outputs."
+        if !model.chosenTakes.isEmpty {
+            let picked = model.runSize(takes: model.chosenTakes)
+            text += " The selected takes: \(Self.size(picked.footage)), about \(Self.size(picked.written)) written."
+        }
+        return text
+    }
+
+    /// When the destination is too small for the card, or for the selected takes.
+    private var spaceWarning: String? {
+        guard let free = model.destinationFree else {
+            return nil
+        }
+        let all = model.runSize(takes: nil)
+        if model.chosenTakes.isEmpty {
+            return free < all.written ? "The destination has only \(Self.size(free)) free: not enough for this card." : nil
+        }
+        let picked = model.runSize(takes: model.chosenTakes)
+        if free < picked.written {
+            return "The destination has only \(Self.size(free)) free: not enough for the selected takes."
+        }
+        return free < all.written ? "The destination has \(Self.size(free)) free: enough for the selected takes, not for the whole card." : nil
+    }
+
+    static func colour(_ verdict: CardJobResult.Verdict) -> Color {
+        switch verdict {
+        case .allVerified:
+            return .green
+        case .partial:
+            return .orange
+        case .problems:
+            return .red
+        }
+    }
+
+    static func caption(_ t: TakeRow) -> String {
+        "\(t.frames) frames · \(t.duration) · \(size(t.bytes)) · \(t.start)"
+    }
+
+    static func size(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    static func minutes(_ seconds: Double) -> String {
+        let s = Int(seconds.rounded())
+        return s >= 60 ? "\(s / 60) min \(s % 60) s" : "\(s) s"
     }
 }

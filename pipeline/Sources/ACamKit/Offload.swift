@@ -17,6 +17,9 @@ struct OffloadOptions {
     var eepromText: String?
     /// Driver log lines since boot; nil skips the check (which counts as a problem).
     var kernelLog: (() throws -> [KernelLogLine])? = KernelLog.linesSinceBoot
+    /// Take folders to copy, by name; nil copies every take. The others are listed in the report as
+    /// not copied, and such a run is never ALL VERIFIED.
+    var takes: Set<String>? = nil
 }
 
 struct FileResult {
@@ -69,6 +72,8 @@ struct OffloadResult {
     var takeTableSummary = ""
     var kernelLogSummary = ""
     var firstFrameSummary = ""
+    /// Takes on the card that were not chosen, so not copied.
+    var notCopied: [String] = []
 
     var allVerified: Bool { cardProblems.isEmpty && !takes.contains { $0.failed } }
 }
@@ -90,14 +95,23 @@ final class Offload {
     func run() throws -> OffloadResult {
         let fm = FileManager.default
         let card = try CardVolume.open(options.source)
+        if let chosen = options.takes {
+            let unknown = chosen.subtracting(card.takes.map { $0.name })
+            guard !chosen.isEmpty, unknown.isEmpty else {
+                throw FileIOError(description: chosen.isEmpty ? "no takes chosen"
+                                  : "not on \(card.name): \(unknown.sorted().joined(separator: ", "))")
+            }
+        }
+        // The takes to copy, in card order.
+        let takes = card.takes.filter { options.takes?.contains($0.name) ?? true }
         let cardFolder = options.destination.appendingPathComponent(card.name)
         guard !fm.fileExists(atPath: cardFolder.path) else {
             throw FileIOError(description: "\(cardFolder.path) already exists; choose a new destination folder")
         }
-        let needed = card.takes.reduce(0) { $0 + $1.frames.reduce(0) { $0 + $1.size } }
+        let needed = takes.reduce(0) { $0 + $1.frames.reduce(0) { $0 + $1.size } }
         if let free = try fm.attributesOfFileSystem(forPath: options.destination.path)[.systemFreeSize] as? Int,
            free < needed {
-            throw FileIOError(description: "\(options.destination.path) has \(free / 1_000_000) MB free, the card needs \(needed / 1_000_000) MB")
+            throw FileIOError(description: "\(options.destination.path) has \(free / 1_000_000) MB free, the \(options.takes == nil ? "card needs" : "chosen takes need") \(needed / 1_000_000) MB")
         }
         try fm.createDirectory(at: cardFolder, withIntermediateDirectories: false)
         if let text = options.eepromText {
@@ -107,20 +121,21 @@ final class Offload {
         let started = Date()
         var result = OffloadResult(cardName: card.name, source: card.url, cardFolder: cardFolder,
                                    started: started, finished: started, takes: [])
-        let maxSize = max(card.takes.flatMap { $0.frames.map { $0.size } }.max() ?? 0, 1)
+        result.notCopied = card.takes.map { $0.name }.filter { options.takes?.contains($0) == false }
+        let maxSize = max(takes.flatMap { $0.frames.map { $0.size } }.max() ?? 0, 1)
         let buffers = (0..<4).map { _ in
             UnsafeMutableRawBufferPointer.allocate(byteCount: maxSize, alignment: 16_384)
         }
         defer { buffers.forEach { $0.deallocate() } }
 
-        for take in card.takes {
+        for take in takes {
             result.takes.append(try copy(take, into: cardFolder, buffers: Array(buffers[0..<3])))
         }
         for i in result.takes.indices {
-            verify(&result.takes[i], take: card.takes[i], cardFolder: cardFolder,
+            verify(&result.takes[i], take: takes[i], cardFolder: cardFolder,
                    buffers: (buffers[0], buffers[3]))
         }
-        rereadUnstable(&result, card: card, cardFolder: cardFolder, buffers: (buffers[0], buffers[1]))
+        rereadUnstable(&result, takes: takes, cardFolder: cardFolder, buffers: (buffers[0], buffers[1]))
         for i in result.takes.indices {
             recordFileProblems(&result.takes[i])
         }
@@ -128,7 +143,7 @@ final class Offload {
         if reread > 0 {
             result.cardWarnings.append("The card returned different data the second time \(reread) frames were read (random read errors of the card's flash). acam read each of them again until two reads matched exactly and kept that version; any frame where no two reads matched is listed under Problems.")
         }
-        let totalFrames = card.takes.reduce(0) { $0 + $1.frames.count }
+        let totalFrames = takes.reduce(0) { $0 + $1.frames.count }
         if totalFrames <= 8 {
             result.cardWarnings.append("Only \(totalFrames) frames: the second read may have come from the driver's 8-frame cache.")
         }
@@ -297,7 +312,7 @@ final class Offload {
     /// copy was made from a bad read, it is replaced. Every re-read comes from the flash: the
     /// pending frames are read in turn with at least 8 other frames in between (the driver keeps
     /// the last 8 frames), and the file cache is dropped before each read.
-    private func rereadUnstable(_ result: inout OffloadResult, card: CardVolume, cardFolder: URL,
+    private func rereadUnstable(_ result: inout OffloadResult, takes: [TakeFolder], cardFolder: URL,
                                 buffers: (UnsafeMutableRawBufferPointer, UnsafeMutableRawBufferPointer)) {
         var pending: [(take: Int, file: Int)] = []
         var seen: [Int: [UInt64]] = [:] // hashes read so far: the copy's first
@@ -312,7 +327,7 @@ final class Offload {
             return
         }
         let pendingKeys = Set(seen.keys)
-        let fillers = card.takes.enumerated().flatMap { ti, t in
+        let fillers = takes.enumerated().flatMap { ti, t in
             t.frames.enumerated().compactMap { fi, f in pendingKeys.contains(ti << 32 | fi) ? nil : f.url.path }
         }.prefix(8)
         progress("reread \(pending.count) frames that read differently the second time")
@@ -325,7 +340,7 @@ final class Offload {
             }
             var still: [(take: Int, file: Int)] = []
             for p in pending {
-                let frame = card.takes[p.take].frames[p.file]
+                let frame = takes[p.take].frames[p.file]
                 let key = p.take << 32 | p.file
                 FileIO.evictCache(frame.url.path)
                 guard let n = try? verificationRead(frame.url.path, buffers.0) else {
@@ -410,8 +425,9 @@ final class Offload {
                 firstTakeWith[h] = result.takes[i].name
             }
         }
+        let which = result.notCopied.isEmpty ? "all \(result.takes.count) takes" : "the \(result.takes.count) copied takes"
         result.firstFrameSummary = duplicates == 0
-            ? "the first frames of all \(result.takes.count) takes are different"
+            ? "the first frames of \(which) are different"
             : "\(duplicates) takes start with another take's first frame"
     }
 
@@ -434,15 +450,21 @@ final class Offload {
         let hidden = after.filter { newestListed == nil || $0.createdKey >= newestListed! }
         let earlier = after.filter { newestListed != nil && $0.createdKey < newestListed! }
         var problems = 0
+        // Compared with the card's volume, so takes that were not chosen for copying count too.
         for entry in listed {
             let name = eeprom.folderName(index: entry.index)
-            guard let i = result.takes.firstIndex(where: { $0.name == name }) else {
+            guard let folder = card.takes.first(where: { $0.name == name }) else {
                 result.cardProblems.append("Take \(name) (\(entry.frames) frames in the take table) is missing from the card's volume.")
                 problems += 1
                 continue
             }
-            if result.takes[i].files.count != entry.frames {
-                result.takes[i].problems.append("The take table says \(entry.frames) frames; the volume has \(result.takes[i].files.count).")
+            if folder.frames.count != entry.frames {
+                let message = "The take table says \(entry.frames) frames; the volume has \(folder.frames.count)."
+                if let i = result.takes.firstIndex(where: { $0.name == name }) {
+                    result.takes[i].problems.append(message)
+                } else {
+                    result.cardProblems.append("\(name) (not copied): \(message)")
+                }
                 problems += 1
             }
         }
@@ -450,7 +472,7 @@ final class Offload {
             result.cardProblems.append("Take \(eeprom.folderName(index: entry.index)) (\(entry.frames) frames, recorded \(entry.createdText)) is in the take table after an empty entry and is not older than the listed takes, but it is missing from the card's volume: the driver shows only the takes before the first empty entry.")
             problems += 1
         }
-        for t in result.takes where !listed.contains(where: { eeprom.folderName(index: $0.index) == t.name }) {
+        for t in card.takes where !listed.contains(where: { eeprom.folderName(index: $0.index) == t.name }) {
             result.cardProblems.append("Take folder \(t.name) is not in the take table.")
             problems += 1
         }

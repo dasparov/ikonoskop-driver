@@ -28,6 +28,28 @@ struct CardJobResult {
         offload.allVerified && problems.isEmpty && !audio.values.contains { $0.failed }
             && !clean.values.contains { $0.failed } && !prores.values.contains { $0.values.contains { $0.failed } }
     }
+
+    enum Verdict {
+        case allVerified, partial, problems
+    }
+
+    /// PARTIAL when only some takes were chosen and everything copied was verified: never ALL
+    /// VERIFIED, since the other takes are still only on the card.
+    var verdict: Verdict {
+        !allVerified ? .problems : offload.notCopied.isEmpty ? .allVerified : .partial
+    }
+
+    /// The one-line result in REPORT.md, `acam offload` and the app.
+    var headline: String {
+        switch verdict {
+        case .allVerified:
+            return "ALL VERIFIED"
+        case .problems:
+            return "PROBLEMS FOUND"
+        case .partial:
+            return "PARTIAL: \(offload.takes.count) of \(offload.takes.count + offload.notCopied.count) takes copied and verified"
+        }
+    }
 }
 
 final class CardJob {

@@ -5,7 +5,7 @@ let help = """
     acam \(acamVersion): A-Cam dII card pipeline
 
     Usage:
-      acam offload --source <card> --dest <folder> [--eeprom <file> | --read-eeprom]
+      acam offload --source <card> --dest <folder> [--eeprom <file> | --read-eeprom] [--takes <take>,...]
                    [--profile <id>] [--prores log|preview|both] [--no-audio] [--no-clean]
           Copy every take of the mounted card into <folder>/<card name>/<take>/frames/,
           verify every copy with xxHash64 and write an ASC MHL history per take; then, from the
@@ -14,6 +14,8 @@ let help = """
           The take-table check needs the card's EEPROM:
             --eeprom <file>  a dump made with: sudo tools/ikctl eeprom 0 0x2000 > <file>
             --read-eeprom    run that command now (asks for your password)
+          --takes AC102001,AC102004  copy only these takes; the report then says PARTIAL and lists
+                                     the takes left on the card
 
       acam audio <take folder>...                     <take>_Audio.wav from <take>/frames/
       acam clean [--profile <id>] <take folder>...    clean DNGs in <take>/clean/
@@ -125,7 +127,7 @@ func looks(_ value: String?) throws -> [ProResLook] {
 }
 
 func offload(_ args: ArraySlice<String>) throws -> Int32 {
-    let a = try Arguments(args, values: ["--source", "--dest", "--eeprom", "--profile", "--prores"],
+    let a = try Arguments(args, values: ["--source", "--dest", "--eeprom", "--profile", "--prores", "--takes"],
                           flags: ["--read-eeprom", "--no-audio", "--no-clean"])
     var eepromText: String?
     if let path = a.value("--eeprom") {
@@ -136,7 +138,8 @@ func offload(_ args: ArraySlice<String>) throws -> Int32 {
     let offload = OffloadOptions(source: URL(fileURLWithPath: try a.required("--source")),
                                  destination: URL(fileURLWithPath: try a.required("--dest")),
                                  eeprom: try eepromText.map(EepromImage.parseHexDump),
-                                 eepromText: eepromText)
+                                 eepromText: eepromText,
+                                 takes: a.value("--takes").map { Set($0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }) })
     let options = CardJobOptions(offload: offload, audio: !a.flag("--no-audio"), clean: !a.flag("--no-clean"),
                                  profile: try profile(a.value("--profile")), prores: try looks(a.value("--prores")))
     let result = try CardJob(options).run()
@@ -152,7 +155,7 @@ func offload(_ args: ArraySlice<String>) throws -> Int32 {
     for p in result.problems + result.offload.cardProblems {
         print("problem: \(p)")
     }
-    print("\(result.allVerified ? "ALL VERIFIED" : "PROBLEMS FOUND"): \(result.offload.cardFolder.appendingPathComponent("REPORT.md").path)")
+    print("\(result.headline): \(result.offload.cardFolder.appendingPathComponent("REPORT.md").path)")
     return result.allVerified ? 0 : 1
 }
 

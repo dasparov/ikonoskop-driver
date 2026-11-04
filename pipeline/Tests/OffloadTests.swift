@@ -6,7 +6,8 @@ private let takes = [FixtureTake(frames: 2, seed: 100), FixtureTake(frames: 3, s
 /// Card 42 with `takes` in <scratch>/card, an empty <scratch>/dest, and a card job configured
 /// with a matching EEPROM dump and a clean driver log.
 private func setUp(_ t: TestContext, _ name: String, takes: [FixtureTake] = takes,
-                   eeprom: String? = nil, clean: Bool = false) throws -> (card: URL, dest: URL, job: CardJob) {
+                   eeprom: String? = nil, clean: Bool = false,
+                   chosen: Set<String>? = nil) throws -> (card: URL, dest: URL, job: CardJob) {
     let dir = try t.scratchDirectory(name)
     let card = try Fixture.card(in: dir.appendingPathComponent("card"), number: 42, takes: takes)
     let dest = dir.appendingPathComponent("dest")
@@ -15,7 +16,8 @@ private func setUp(_ t: TestContext, _ name: String, takes: [FixtureTake] = take
     let frames = takes.reduce(0) { $0 + $1.frames }
     let offload = OffloadOptions(source: card, destination: dest, eeprom: try EepromImage.parseHexDump(dump),
                                  eepromText: dump,
-                                 kernelLog: { Fixture.cleanLog(number: 42, takes: takes.count, frames: frames) })
+                                 kernelLog: { Fixture.cleanLog(number: 42, takes: takes.count, frames: frames) },
+                                 takes: chosen)
     let job = CardJob(CardJobOptions(offload: offload, clean: clean))
     job.progress = { _ in }
     return (card, dest, job)
@@ -270,4 +272,34 @@ func offloadRefusesExistingTests(_ t: TestContext) throws {
     t.expectEqual(try FileManager.default.contentsOfDirectory(atPath: existing.path), ["note.txt"],
                   "nothing written into it")
     t.expectEqual(try String(contentsOf: existing.appendingPathComponent("note.txt"), encoding: .utf8), "keep me")
+}
+
+func offloadChosenTakesTests(_ t: TestContext) throws {
+    // Only take 2 is chosen. Takes 1 and 3 stay on the card, so the run must not say ALL VERIFIED,
+    // and the take table check must still count them.
+    let s = try setUp(t, "chosen", clean: true, chosen: ["AC042002"])
+    let job = try s.job.run()
+    let r = job.offload
+    let fm = FileManager.default
+    t.expectEqual(r.takes.map { $0.name }, ["AC042002"])
+    t.expectEqual(r.notCopied, ["AC042001", "AC042003"])
+    t.expect(r.allVerified && r.cardProblems.isEmpty, "the chosen take verified, the take table matches: \(r.cardProblems)")
+    t.expect(job.verdict == .partial, "a copy of some takes is PARTIAL")
+    t.expectEqual(job.headline, "PARTIAL: 1 of 3 takes copied and verified")
+    t.expect(!fm.fileExists(atPath: r.cardFolder.appendingPathComponent("AC042001").path), "take 1 not copied")
+    t.expect(fm.fileExists(atPath: r.cardFolder.appendingPathComponent("AC042002/clean").path), "take 2 cleaned")
+    let text = try report(r)
+    t.expect(!text.contains("ALL VERIFIED"), "the report never says ALL VERIFIED")
+    t.expect(text.contains("not copied: AC042001, AC042003"), "the report names the takes left on the card")
+
+    // A take that is not on the card is refused before anything is written.
+    let bad = try setUp(t, "chosen-unknown", chosen: ["AC042009"])
+    var refused = ""
+    do {
+        _ = try bad.job.run()
+    } catch {
+        refused = "\(error)"
+    }
+    t.expect(refused.contains("AC042009"), "unknown take refused: \(refused)")
+    t.expectEqual(try fm.contentsOfDirectory(atPath: bad.dest.path), [], "nothing written")
 }
