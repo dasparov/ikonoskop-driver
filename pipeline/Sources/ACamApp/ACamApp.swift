@@ -38,6 +38,12 @@ enum TakeLayout: String {
     case list, grid
 }
 
+/// A message for the user, shown in an alert.
+struct Notice {
+    let title: String
+    let message: String
+}
+
 final class CardModel: ObservableObject {
     @Published var cards: [URL] = []
     @Published var selected: URL? {
@@ -62,7 +68,7 @@ final class CardModel: ObservableObject {
     private var previewWindow: NSWindow?
     private var previewObserver: NSObjectProtocol?
     /// A message for the user, shown in an alert.
-    @Published var notice: String?
+    @Published var notice: Notice?
     let profiles: [(id: String, name: String)] = {
         guard let dir = Bundle.main.resourceURL?.appendingPathComponent("profiles"),
               let ids = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
@@ -175,7 +181,8 @@ final class CardModel: ObservableObject {
     /// card is being copied. An open preview of another take closes.
     func openPreview(_ take: TakeRow) {
         guard !running else {
-            notice = "The card is being copied. Previews are off until the copy has finished: a preview reads the card too, which would slow the copy down."
+            notice = Notice(title: "Preview is off",
+                            message: "The card is being copied. Previews are off until the copy has finished: a preview reads the card too, which would slow the copy down.")
             return
         }
         closePreview()
@@ -214,6 +221,38 @@ final class CardModel: ObservableObject {
         previewWindow = nil
     }
 
+    /// Ejects the selected card as Finder does (unmount, then eject), so it can be taken out of the
+    /// reader; not while it is being copied. An open preview closes first, since it reads the card.
+    func eject() {
+        guard let card = selected else {
+            return
+        }
+        let name = card.lastPathComponent
+        guard !running else {
+            notice = Notice(title: "\(name) is being copied",
+                            message: "Eject the card when the copy has finished. Taking it out now would stop the copy.")
+            return
+        }
+        closePreview()
+        previewPass += 1
+        status = "Ejecting \(name)…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try NSWorkspace.shared.unmountAndEjectDevice(at: card) }
+            DispatchQueue.main.async {
+                // Unmounted but not ejected is just as safe for taking the card out. The answer is an
+                // alert: the status line is cleared when the card list reloads.
+                self.status = ""
+                if case .failure(let error) = result, FileManager.default.fileExists(atPath: card.path) {
+                    self.notice = Notice(title: "Could not eject \(name)",
+                                         message: "\(error.localizedDescription) If another app is using the card, quit it and try again.")
+                } else {
+                    self.notice = Notice(title: "\(name) is ejected", message: "You can take the card out of the reader.")
+                }
+                self.refreshCards()
+            }
+        }
+    }
+
     func chooseDestination() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -237,7 +276,8 @@ final class CardModel: ObservableObject {
         // A preview reads the card too: the copy gets the card to itself.
         if previewWindow != nil {
             closePreview()
-            notice = "The preview was closed: the card is being copied now. Previews are back when the copy has finished."
+            notice = Notice(title: "Preview closed",
+                            message: "The card is being copied now. Previews are back when the copy has finished.")
         }
         running = true
         verdict = nil
@@ -356,6 +396,9 @@ struct ContentView: View {
                     .disabled(model.running)
                 }
                 Button("Refresh") { model.refreshCards() }.disabled(model.running)
+                Button { model.eject() } label: { Label("Eject", systemImage: "eject") }
+                    .disabled(model.selected == nil)
+                    .help("Eject the card, then take it out of the reader")
                 Spacer()
                 Picker("Show takes as", selection: $layout) {
                     Text("List").tag(TakeLayout.list)
@@ -449,10 +492,11 @@ struct ContentView: View {
             Spacer(minLength: 0)
         }
         .padding(18)
-        .alert("Preview is off", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
+        .alert(model.notice?.title ?? "", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } }),
+               presenting: model.notice) { _ in
             Button("OK", role: .cancel) {}
-        } message: {
-            Text(model.notice ?? "")
+        } message: { notice in
+            Text(notice.message)
         }
     }
 
