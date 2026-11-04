@@ -1,4 +1,4 @@
-// How full a card is and how much a run writes, for the app's card summary.
+// How full a card is and about how much a run's outputs take, for the run plan (CardPlan).
 import Foundation
 
 enum CardSpace {
@@ -22,13 +22,13 @@ enum CardSpace {
         }
     }
 
-    /// About how much a run writes for `frames` frames of `frameFileBytes` each: the copies, the
-    /// WAV (8 KB a frame), clean DNGs (about 53% of a frame) and ProRes 4444 XQ (measured on take
-    /// AC000001: 2.1 MB a frame ACEScct, 2.3 MB Rec.709).
-    static func estimatedRunBytes(frames: Int, frameFileBytes: Int64, audio: Bool, clean: Bool,
-                                  looks: [ProResLook]) -> Int64 {
+    /// About how much the outputs of `frames` frames of `frameFileBytes` each take: the WAV (8 KB
+    /// a frame), clean DNGs (about 53% of a frame) and ProRes 4444 XQ (measured on take
+    /// AC000001: 2.1 MB a frame ACEScct, 2.3 MB Rec.709). The copies themselves are not included.
+    static func estimatedOutputBytes(frames: Int, frameFileBytes: Int64, audio: Bool, clean: Bool,
+                                     looks: [ProResLook]) -> Int64 {
         let n = Int64(frames)
-        var total = n * frameFileBytes
+        var total: Int64 = 0
         if audio {
             total += n * 8_000
         }

@@ -79,13 +79,15 @@ enum ProResTake {
     }
 
     /// Renders <take>/clean/*.DNG (or <take>/frames/*.DNG when there is no clean/) to
-    /// <outputDir>/<take>_<look.rawValue>.mov.
-    static func run(take folder: URL, look: ProResLook, outputDir: URL,
+    /// <outputDir>/<take>_<look.rawValue>.mov. The movie is written as <name>.unfinished.mov and
+    /// renamed when it is complete; stopped, it is removed and StoppedError thrown.
+    static func run(take folder: URL, look: ProResLook, outputDir: URL, stop: StopSignal? = nil,
                     progress: @escaping (String) -> Void) throws -> ProResResult {
         let fm = FileManager.default
         let take = folder.lastPathComponent
         let name = "\(take)_\(look.rawValue)"
         let output = outputDir.appendingPathComponent("\(name).mov")
+        let unfinished = outputDir.appendingPathComponent("\(name).unfinished.mov")
         guard !fm.fileExists(atPath: output.path) else {
             throw FileIOError(description: "\(output.path) already exists")
         }
@@ -125,7 +127,11 @@ enum ProResTake {
         }
 
         try fm.createDirectory(at: outputDir, withIntermediateDirectories: true)
-        let movie = try MovieWriter(url: output, look: look, width: width, height: height,
+        if fm.fileExists(atPath: unfinished.path) {
+            try FileIO.trash(unfinished)
+            result.warnings.append("\(unfinished.lastPathComponent), left by a run that did not finish, was moved to the Trash")
+        }
+        let movie = try MovieWriter(url: unfinished, look: look, width: width, height: height,
                                     frameDuration: frameDuration, frames: frames.count, audio: audio,
                                     timecode: startTimecode, timecodeFPS: header.timecodeFPS,
                                     reel: header.reelName ?? take)
@@ -135,6 +141,7 @@ enum ProResTake {
         var done = 0
         do {
             for start in stride(from: 0, to: frames.count, by: batch) {
+                try stop?.check()
                 let urls = Array(frames[start..<min(start + batch, frames.count)])
                 var buffers = [CVPixelBuffer?](repeating: nil, count: urls.count)
                 var errors = [String?](repeating: nil, count: urls.count)
@@ -167,9 +174,13 @@ enum ProResTake {
                 }
             }
             try movie.finish()
+            try fm.moveItem(at: unfinished, to: output)
         } catch {
             movie.cancel()
-            try? fm.removeItem(at: output)
+            try? fm.removeItem(at: unfinished)
+            if error is StoppedError {
+                throw error
+            }
             result.problems.append("\(error)")
             return result
         }

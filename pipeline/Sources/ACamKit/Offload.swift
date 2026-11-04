@@ -1,15 +1,18 @@
-// Verified offload: copy every take of a mounted card into <destination>/<card>/<take>/frames/,
-// verify every copy with xxHash64, check the take table, the driver log and the first frames, and
-// write an ASC MHL manifest per verified take. CardJob adds the later steps and REPORT.md.
+// Verified offload: copy the takes of a mounted card into <destination>/<card>/<take>/frames/
+// (and, optionally, at the same time into a second destination), verify every copy with
+// xxHash64, check the take table, the driver log and the first frames, and write an ASC MHL
+// manifest per verified take. CardPlan decides beforehand which takes are copied; takes an earlier
+// run already copied are kept and checked with the rest. CardJob adds the later steps and
+// REPORT.md.
 //
 // Verification: each source file is hashed while it is copied, read a second time after every
 // take has been copied (the driver's 8-frame cache and the file cache are long evicted by then),
-// and its copy is read back from the destination; all three hashes must be equal.
+// and its copies are read back from the destinations; all hashes must be equal.
 import Foundation
 
 struct OffloadOptions {
     var source: URL
-    /// The card folder is created inside it and must not exist yet.
+    /// The card folder is made inside it; an existing one only with `addToExisting`.
     var destination: URL
     /// Take table from `ikctl eeprom`; without it the offload cannot report ALL VERIFIED.
     var eeprom: EepromImage?
@@ -20,6 +23,11 @@ struct OffloadOptions {
     /// Take folders to copy, by name; nil copies every take. The others are listed in the report as
     /// not copied, and such a run is never ALL VERIFIED.
     var takes: Set<String>? = nil
+    /// A second copy of everything, on another drive.
+    var secondDestination: URL? = nil
+    /// Add the takes and outputs an existing card folder lacks, instead of refusing it. Takes it
+    /// already holds verified copies of are kept as they are; unfinished copies go to the Trash.
+    var addToExisting = false
 }
 
 struct FileResult {
@@ -30,6 +38,9 @@ struct FileResult {
     var sourceHash: UInt64?
     var destinationHash: UInt64?
     var error: String?
+    /// The second copy, when the take was also written to the second destination.
+    var secondHash: UInt64?
+    var secondError: String?
     /// Reads of the source file: 1 while copying, 2 after verification, more when the card
     /// returned different data and the frame was read again until two reads matched.
     var sourceReads = 1
@@ -38,6 +49,10 @@ struct FileResult {
 
     var verified: Bool {
         error == nil && copyHash != nil && sourceHash == copyHash && destinationHash == copyHash
+    }
+
+    var secondVerified: Bool {
+        verified && secondError == nil && secondHash == copyHash
     }
 }
 
@@ -51,8 +66,15 @@ struct TakeResult {
     var problems: [String] = []
     var warnings: [String] = []
     var manifest: URL?
+    /// Copied and verified by an earlier run into the same card folder; kept as it was.
+    var copiedEarlier = false
+    /// Also written to the second destination while it was copied.
+    var second = false
+    var secondProblems: [String] = []
+    var secondManifest: URL?
 
     var failed: Bool { !problems.isEmpty || files.contains { !$0.verified } }
+    var secondFailed: Bool { second && (!secondProblems.isEmpty || files.contains { !$0.secondVerified }) }
     var bytes: Int { files.reduce(0) { $0 + $1.size } }
     var verifiedCount: Int { files.filter { $0.verified }.count }
     /// Frames the card returned differently at first, read until two reads matched.
@@ -64,18 +86,23 @@ struct OffloadResult {
     let source: URL
     /// <destination>/<card name>
     let cardFolder: URL
+    /// <second destination>/<card name>
+    let secondFolder: URL?
     let started: Date
     var finished: Date
+    /// Every take now in the card folder, in card order: copied in this run or kept from an
+    /// earlier one (`copiedEarlier`).
     var takes: [TakeResult]
     var cardProblems: [String] = []
     var cardWarnings: [String] = []
     var takeTableSummary = ""
     var kernelLogSummary = ""
     var firstFrameSummary = ""
-    /// Takes on the card that were not chosen, so not copied.
+    /// Takes on the card that are not in the card folder: not chosen, so not copied.
     var notCopied: [String] = []
 
     var allVerified: Bool { cardProblems.isEmpty && !takes.contains { $0.failed } }
+    var copiedNow: [TakeResult] { takes.filter { !$0.copiedEarlier } }
 }
 
 final class Offload {
@@ -83,7 +110,9 @@ final class Offload {
 
     let options: OffloadOptions
     var progress: (String) -> Void = { print($0) }
-    /// Test seam: runs after each frame has been written, before verification.
+    var stop = StopSignal()
+    /// Test seam: runs after each frame has been written (to either destination), before
+    /// verification.
     var afterCopy: ((URL) -> Void)?
     /// Test seam: the second (verification) read of a source file.
     var verificationRead: (String, UnsafeMutableRawBufferPointer) throws -> Int = FileIO.read
@@ -92,61 +121,78 @@ final class Offload {
         self.options = options
     }
 
+    /// Plans the run (CardPlan) and runs it; CardJob plans first to check the space.
     func run() throws -> OffloadResult {
-        let fm = FileManager.default
-        let card = try CardVolume.open(options.source)
-        if let chosen = options.takes {
-            let unknown = chosen.subtracting(card.takes.map { $0.name })
-            guard !chosen.isEmpty, unknown.isEmpty else {
-                throw FileIOError(description: chosen.isEmpty ? "no takes chosen"
-                                  : "not on \(card.name): \(unknown.sorted().joined(separator: ", "))")
-            }
-        }
-        // The takes to copy, in card order.
-        let takes = card.takes.filter { options.takes?.contains($0.name) ?? true }
-        let cardFolder = options.destination.appendingPathComponent(card.name)
-        guard !fm.fileExists(atPath: cardFolder.path) else {
-            throw FileIOError(description: "\(cardFolder.path) already exists; choose a new destination folder")
-        }
-        let needed = takes.reduce(0) { $0 + $1.frames.reduce(0) { $0 + $1.size } }
-        if let free = try fm.attributesOfFileSystem(forPath: options.destination.path)[.systemFreeSize] as? Int,
-           free < needed {
-            throw FileIOError(description: "\(options.destination.path) has \(free / 1_000_000) MB free, the \(options.takes == nil ? "card needs" : "chosen takes need") \(needed / 1_000_000) MB")
-        }
-        try fm.createDirectory(at: cardFolder, withIntermediateDirectories: false)
-        if let text = options.eepromText {
-            try Data(text.utf8).write(to: cardFolder.appendingPathComponent("EEPROM.txt"), options: .withoutOverwriting)
-        }
+        try run(CardPlan.make(CardJobOptions(offload: options, audio: false, clean: false)))
+    }
 
+    /// Copies `plan.copy`. Stopped, it removes the take folders it made and throws StoppedError:
+    /// nothing is kept before every copy has been verified.
+    func run(_ plan: CardPlan) throws -> OffloadResult {
+        let fm = FileManager.default
+        let card = plan.card
+        let takes = plan.copy
+        let cardFolder = plan.cardFolder
         let started = Date()
         var result = OffloadResult(cardName: card.name, source: card.url, cardFolder: cardFolder,
-                                   started: started, finished: started, takes: [])
-        result.notCopied = card.takes.map { $0.name }.filter { options.takes?.contains($0) == false }
+                                   secondFolder: plan.secondFolder, started: started, finished: started, takes: [])
+        result.notCopied = plan.notCopied
+        // Folders this run makes, removed again if it is stopped.
+        var made: [URL] = []
+        for folder in [cardFolder, plan.secondFolder].compactMap({ $0 }) where !fm.fileExists(atPath: folder.path) {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: false)
+            made.append(folder)
+        }
+        for url in plan.unfinished {
+            do {
+                try FileIO.trash(url)
+            } catch {
+                throw FileIOError(description: "could not move the unfinished copy \(url.path) to the Trash (\(error.localizedDescription)); move it away and try again")
+            }
+            result.cardWarnings.append("`\(url.path)` held an unfinished copy from an earlier run: it was moved to the Trash and the take copied again.")
+        }
+
         let maxSize = max(takes.flatMap { $0.frames.map { $0.size } }.max() ?? 0, 1)
-        let buffers = (0..<4).map { _ in
+        let buffers = (0..<(plan.secondFolder == nil ? 4 : 5)).map { _ in
             UnsafeMutableRawBufferPointer.allocate(byteCount: maxSize, alignment: 16_384)
         }
         defer { buffers.forEach { $0.deallocate() } }
 
-        for take in takes {
-            result.takes.append(try copy(take, into: cardFolder, buffers: Array(buffers[0..<3])))
+        var copied: [TakeResult] = []
+        do {
+            for take in takes {
+                try stop.check()
+                let second = plan.copyToSecond.contains(take.name) ? plan.secondFolder : nil
+                made += [cardFolder, second].compactMap { $0?.appendingPathComponent(take.name) }
+                copied.append(try copy(take, into: cardFolder, second: second, buffers: Array(buffers[0..<3])))
+            }
+            for i in copied.indices {
+                try verify(&copied[i], take: takes[i], cardFolder: cardFolder, second: plan.secondFolder,
+                           buffers: Array(buffers[3...]) + [buffers[0]])
+            }
+            try rereadUnstable(&copied, takes: takes, cardFolder: cardFolder, second: plan.secondFolder,
+                               buffers: (buffers[0], buffers[1]))
+        } catch {
+            // Nothing of this run is kept before every copy has been verified.
+            for url in made.reversed() {
+                try? fm.removeItem(at: url)
+            }
+            throw error
         }
-        for i in result.takes.indices {
-            verify(&result.takes[i], take: takes[i], cardFolder: cardFolder,
-                   buffers: (buffers[0], buffers[3]))
+        for i in copied.indices {
+            recordFileProblems(&copied[i])
         }
-        rereadUnstable(&result, takes: takes, cardFolder: cardFolder, buffers: (buffers[0], buffers[1]))
-        for i in result.takes.indices {
-            recordFileProblems(&result.takes[i])
-        }
-        let reread = result.takes.reduce(0) { $0 + $1.rereadCount }
+        let reread = copied.reduce(0) { $0 + $1.rereadCount }
         if reread > 0 {
             result.cardWarnings.append("The card returned different data the second time \(reread) frames were read (random read errors of the card's flash). acam read each of them again until two reads matched exactly and kept that version; any frame where no two reads matched is listed under Problems.")
         }
         let totalFrames = takes.reduce(0) { $0 + $1.frames.count }
-        if totalFrames <= 8 {
+        if totalFrames > 0 && totalFrames <= 8 {
             result.cardWarnings.append("Only \(totalFrames) frames: the second read may have come from the driver's 8-frame cache.")
         }
+        // Every take in the card folder, in card order.
+        let byName = Dictionary(uniqueKeysWithValues: copied.map { ($0.name, $0) })
+        result.takes = card.takes.compactMap { t in byName[t.name] ?? plan.kept[t.name].map { keptResult(t, $0) } }
         for i in result.takes.indices {
             let t = result.takes[i]
             if t.files.isEmpty {
@@ -164,7 +210,7 @@ final class Offload {
         checkTakeTable(&result, card: card)
         checkKernelLog(&result, card: card)
 
-        for i in result.takes.indices where !result.takes[i].failed {
+        for i in result.takes.indices where !result.takes[i].copiedEarlier && !result.takes[i].failed {
             let t = result.takes[i]
             let entries = t.files.map {
                 MHLEntry(path: "frames/\($0.name)", size: $0.size, modified: $0.modified,
@@ -177,31 +223,74 @@ final class Offload {
             } catch {
                 result.takes[i].problems.append("Could not write the ASC MHL manifest: \(error)")
             }
+            if let second = plan.secondFolder, t.second, !t.secondFailed {
+                do {
+                    result.takes[i].secondManifest = try ASCMHL.addGeneration(
+                        folder: second.appendingPathComponent(t.name), entries: entries, process: "transfer",
+                        created: started)
+                } catch {
+                    result.takes[i].secondProblems.append("Could not write the ASC MHL manifest: \(error)")
+                }
+            }
         }
         result.finished = Date()
         return result
     }
 
+    /// A take an earlier run copied: its frames as that run's checksum history lists them.
+    private func keptResult(_ take: TakeFolder, _ kept: KeptTake) -> TakeResult {
+        var result = TakeResult(name: take.name, files: take.frames.map { f in
+            let entry = kept.history.entries["frames/\(f.name)"]
+            var file = FileResult(name: f.name, size: f.size, modified: entry?.modified ?? f.modified)
+            file.copyHash = entry?.xxh64
+            file.sourceHash = entry?.xxh64
+            file.destinationHash = entry?.xxh64
+            file.sourceReads = 2
+            return file
+        })
+        result.copiedEarlier = true
+        result.firstHeader = kept.firstHeader
+        result.lastHeader = kept.lastHeader
+        result.firstFrameRawHash = kept.firstFrameRawHash
+        result.problems = kept.problems
+        return result
+    }
+
     // ---- copy pass -------------------------------------------------------------------------
 
-    private func copy(_ take: TakeFolder, into cardFolder: URL, buffers: [UnsafeMutableRawBufferPointer]) throws -> TakeResult {
+    /// Reads each frame once and writes it to the destination and, with `second`, to the second
+    /// destination at the same time.
+    private func copy(_ take: TakeFolder, into cardFolder: URL, second: URL?,
+                      buffers: [UnsafeMutableRawBufferPointer]) throws -> TakeResult {
         let fm = FileManager.default
-        let framesDir = cardFolder.appendingPathComponent(take.name).appendingPathComponent("frames")
-        try fm.createDirectory(at: framesDir, withIntermediateDirectories: true)
-        var result = TakeResult(name: take.name, files: take.frames.map { f in
-            let modified = (try? fm.attributesOfItem(atPath: f.url.path)[.modificationDate] as? Date) ?? nil
-            return FileResult(name: f.name, size: f.size, modified: modified ?? Date(timeIntervalSince1970: 0))
+        let dirs = [cardFolder, second].compactMap { $0?.appendingPathComponent(take.name).appendingPathComponent("frames") }
+        for dir in dirs {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        var result = TakeResult(name: take.name, files: take.frames.map {
+            FileResult(name: $0.name, size: $0.size, modified: $0.modified)
         })
-        let writer = DispatchQueue(label: "acam.offload.writer")
+        result.second = second != nil
+        let writers = dirs.map { _ in DispatchQueue(label: "acam.offload.writer") }
         let freeSlots = DispatchSemaphore(value: buffers.count)
         let lock = NSLock()
-        var writeErrors: [Int: String] = [:]
+        // Per destination: frame index -> error. A slot is free again once every writer is done.
+        var writeErrors: [[Int: String]] = dirs.map { _ in [:] }
+        var pending = [Int](repeating: 0, count: buffers.count)
         let started = Date()
         var bytes = 0
+        // Slots are handed out in turn and freed in the same order (each writer writes in order),
+        // so the slot freed first is always the next one; a frame that could not be read hands its
+        // slot to the next frame.
+        var nextSlot = 0
 
         for (i, frame) in take.frames.enumerated() {
+            if stop.isSet {
+                break
+            }
             freeSlots.wait()
-            let slot = buffers[i % buffers.count]
+            let slotIndex = nextSlot % buffers.count
+            let slot = buffers[slotIndex]
             let length: Int
             do {
                 length = try FileIO.read(frame.url.path, into: slot)
@@ -225,34 +314,62 @@ final class Offload {
                 }
             }
             bytes += length
-            let destination = framesDir.appendingPathComponent(frame.name)
+            nextSlot += 1
             let modified = result.files[i].modified
-            writer.async { [afterCopy] in
-                do {
-                    try FileIO.create(destination.path, bytes: data)
-                    try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: destination.path)
-                    afterCopy?(destination)
-                } catch {
+            lock.lock()
+            pending[slotIndex] = dirs.count
+            lock.unlock()
+            for (w, dir) in dirs.enumerated() {
+                let destination = dir.appendingPathComponent(frame.name)
+                writers[w].async { [afterCopy] in
+                    do {
+                        try FileIO.create(destination.path, bytes: data)
+                        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: destination.path)
+                        afterCopy?(destination)
+                    } catch {
+                        lock.lock()
+                        writeErrors[w][i] = "write: \(error)"
+                        lock.unlock()
+                    }
                     lock.lock()
-                    writeErrors[i] = "write: \(error)"
+                    pending[slotIndex] -= 1
+                    let free = pending[slotIndex] == 0
                     lock.unlock()
+                    if free {
+                        freeSlots.signal()
+                    }
                 }
-                freeSlots.signal()
             }
             if (i + 1) % 200 == 0 || i + 1 == take.frames.count {
                 let mbps = Double(bytes) / 1_000_000 / max(Date().timeIntervalSince(started), 0.001)
                 progress(String(format: "copy   %@  %5d/%d frames  %.0f MB/s", take.name, i + 1, take.frames.count, mbps))
             }
         }
-        writer.sync {}
-        for (i, error) in writeErrors {
+        writers.forEach { $0.sync {} }
+        try stop.check()
+        for (i, error) in writeErrors[0] {
             result.files[i].error = error
         }
-        if let last = result.files.indices.last(where: { result.files[$0].error == nil }) {
+        if dirs.count > 1 {
+            for (i, error) in writeErrors[1] {
+                result.files[i].secondError = error
+            }
+        }
+        for (w, dir) in dirs.enumerated() {
+            let ok = result.files.indices.last {
+                result.files[$0].error == nil && (w == 0 || result.files[$0].secondError == nil)
+            }
+            guard let last = ok else {
+                continue
+            }
             do {
-                try FileIO.fullSync(framesDir.appendingPathComponent(result.files[last].name).path)
+                try FileIO.fullSync(dir.appendingPathComponent(result.files[last].name).path)
             } catch {
-                result.problems.append("Could not flush the copies to disk: \(error)")
+                if w == 0 {
+                    result.problems.append("Could not flush the copies to disk: \(error)")
+                } else {
+                    result.secondProblems.append("Could not flush the copies to disk: \(error)")
+                }
             }
         }
         return result
@@ -260,28 +377,43 @@ final class Offload {
 
     // ---- verification pass -----------------------------------------------------------------
 
-    private func verify(_ result: inout TakeResult, take: TakeFolder, cardFolder: URL,
-                        buffers: (UnsafeMutableRawBufferPointer, UnsafeMutableRawBufferPointer)) {
+    /// The second read of every frame, and the read-back of its copies. `buffers`: source, copy,
+    /// second copy.
+    private func verify(_ result: inout TakeResult, take: TakeFolder, cardFolder: URL, second: URL?,
+                        buffers: [UnsafeMutableRawBufferPointer]) throws {
         let framesDir = cardFolder.appendingPathComponent(take.name).appendingPathComponent("frames")
+        let secondDir = result.second ? second?.appendingPathComponent(take.name).appendingPathComponent("frames") : nil
         let started = Date()
         for (i, frame) in take.frames.enumerated() where result.files[i].error == nil {
+            try stop.check()
             let sourcePath = frame.url.path
             let copyPath = framesDir.appendingPathComponent(frame.name).path
             var sourceOutcome: Result<UInt64, Error> = .failure(FileIOError(description: "not read"))
             var copyOutcome: Result<UInt64, Error> = .failure(FileIOError(description: "not read"))
+            var secondOutcome: Result<UInt64, Error>?
             let group = DispatchGroup()
             DispatchQueue.global().async(group: group) { [verificationRead] in
                 sourceOutcome = Result {
                     FileIO.evictCache(sourcePath)
-                    let n = try verificationRead(sourcePath, buffers.0)
-                    return XXHash64.hash(UnsafeRawBufferPointer(rebasing: buffers.0[0..<n]))
+                    let n = try verificationRead(sourcePath, buffers[0])
+                    return XXHash64.hash(UnsafeRawBufferPointer(rebasing: buffers[0][0..<n]))
                 }
             }
             DispatchQueue.global().async(group: group) {
                 copyOutcome = Result {
                     FileIO.evictCache(copyPath)
-                    let n = try FileIO.read(copyPath, into: buffers.1)
-                    return XXHash64.hash(UnsafeRawBufferPointer(rebasing: buffers.1[0..<n]))
+                    let n = try FileIO.read(copyPath, into: buffers[1])
+                    return XXHash64.hash(UnsafeRawBufferPointer(rebasing: buffers[1][0..<n]))
+                }
+            }
+            if let dir = secondDir, result.files[i].secondError == nil {
+                let path = dir.appendingPathComponent(frame.name).path
+                DispatchQueue.global().async(group: group) {
+                    secondOutcome = Result {
+                        FileIO.evictCache(path)
+                        let n = try FileIO.read(path, into: buffers[2])
+                        return XXHash64.hash(UnsafeRawBufferPointer(rebasing: buffers[2][0..<n]))
+                    }
                 }
             }
             group.wait()
@@ -294,6 +426,11 @@ final class Offload {
             switch copyOutcome {
             case .success(let h): result.files[i].destinationHash = h
             case .failure(let e): result.files[i].error = "copy read-back: \(e)"
+            }
+            switch secondOutcome {
+            case .success(let h)?: result.files[i].secondHash = h
+            case .failure(let e)?: result.files[i].secondError = "read-back: \(e)"
+            case nil: break
             }
             if (i + 1) % 200 == 0 || i + 1 == take.frames.count {
                 let mbps = Double(take.frames[0...i].reduce(0) { $0 + $1.size }) / 1_000_000
@@ -309,14 +446,14 @@ final class Offload {
 
     /// Reads each frame whose second read differed from the first again, up to maxSourceReads
     /// reads in all, until two reads agree byte for byte. That version is the verified one; if the
-    /// copy was made from a bad read, it is replaced. Every re-read comes from the flash: the
-    /// pending frames are read in turn with at least 8 other frames in between (the driver keeps
-    /// the last 8 frames), and the file cache is dropped before each read.
-    private func rereadUnstable(_ result: inout OffloadResult, takes: [TakeFolder], cardFolder: URL,
-                                buffers: (UnsafeMutableRawBufferPointer, UnsafeMutableRawBufferPointer)) {
+    /// copies were made from a bad read, they are replaced. Every re-read comes from the flash:
+    /// the pending frames are read in turn with at least 8 other frames in between (the driver
+    /// keeps the last 8 frames), and the file cache is dropped before each read.
+    private func rereadUnstable(_ results: inout [TakeResult], takes: [TakeFolder], cardFolder: URL, second: URL?,
+                                buffers: (UnsafeMutableRawBufferPointer, UnsafeMutableRawBufferPointer)) throws {
         var pending: [(take: Int, file: Int)] = []
         var seen: [Int: [UInt64]] = [:] // hashes read so far: the copy's first
-        for (ti, t) in result.takes.enumerated() {
+        for (ti, t) in results.enumerated() {
             for (fi, f) in t.files.enumerated() where f.error == nil && f.destinationHash == f.copyHash
                 && f.sourceHash != nil && f.sourceHash != f.copyHash {
                 pending.append((ti, fi))
@@ -340,6 +477,7 @@ final class Offload {
             }
             var still: [(take: Int, file: Int)] = []
             for p in pending {
+                try stop.check()
                 let frame = takes[p.take].frames[p.file]
                 let key = p.take << 32 | p.file
                 FileIO.evictCache(frame.url.path)
@@ -349,30 +487,40 @@ final class Offload {
                 }
                 let data = UnsafeRawBufferPointer(rebasing: buffers.0[0..<n])
                 let h = XXHash64.hash(data)
-                var f = result.takes[p.take].files[p.file]
+                var f = results[p.take].files[p.file]
                 f.sourceReads += 1
                 if h == f.copyHash {
                     f.sourceHash = h
                 } else if seen[key]!.dropFirst().contains(h) {
-                    let copy = cardFolder.appendingPathComponent(result.takes[p.take].name)
-                        .appendingPathComponent("frames").appendingPathComponent(frame.name).path
+                    let name = results[p.take].name
+                    let path = { (folder: URL) in
+                        folder.appendingPathComponent(name).appendingPathComponent("frames").appendingPathComponent(frame.name).path
+                    }
                     do {
-                        try replaceCopy(at: copy, with: data, hash: h, modified: f.modified, scratch: buffers.1)
+                        try replaceCopy(at: path(cardFolder), with: data, hash: h, modified: f.modified, scratch: buffers.1)
                         f.copyHash = h
                         f.sourceHash = h
                         f.destinationHash = h
                         f.rewritten = true
                         if p.file == 0 && n > FrameHeader.headerBytes {
-                            result.takes[p.take].firstFrameRawHash = XXHash64.hash(UnsafeRawBufferPointer(rebasing: data[FrameHeader.headerBytes...]))
+                            results[p.take].firstFrameRawHash = XXHash64.hash(UnsafeRawBufferPointer(rebasing: data[FrameHeader.headerBytes...]))
                         }
                     } catch {
                         f.error = "could not replace the copy with the version read twice: \(error)"
+                    }
+                    if let second = second, results[p.take].second, f.error == nil, f.secondError == nil {
+                        do {
+                            try replaceCopy(at: path(second), with: data, hash: h, modified: f.modified, scratch: buffers.1)
+                            f.secondHash = h
+                        } catch {
+                            f.secondError = "could not replace the copy with the version read twice: \(error)"
+                        }
                     }
                 } else {
                     seen[key]!.append(h)
                     still.append(p)
                 }
-                result.takes[p.take].files[p.file] = f
+                results[p.take].files[p.file] = f
             }
             pending = still
         }
@@ -406,6 +554,12 @@ final class Offload {
             } else {
                 take.problems.append("\(f.name): the card returned a different version each of the \(f.sourceReads) times it was read")
             }
+        }
+        guard take.second else {
+            return
+        }
+        for f in take.files where f.verified && !f.secondVerified {
+            take.secondProblems.append("\(f.name): \(f.secondError ?? "the copy on disk differs from the card")")
         }
     }
 
@@ -513,11 +667,22 @@ final class Offload {
             firstFrame.append(sum)
             sum += t.frames.count
         }
-        func takeIndex(ofFrame frame: Int) -> Int? {
-            firstFrame.lastIndex { $0 <= frame }
-        }
         let cardNumber = card.name.filter { $0.isNumber }
         var errors = 0
+        // A finding about a take copied in this run is that take's problem. Takes an earlier run
+        // copied were checked by that run: a finding about one of them is a warning.
+        func record(_ message: String, take name: String?) {
+            if let name = name, let i = result.takes.firstIndex(where: { $0.name == name }) {
+                if result.takes[i].copiedEarlier {
+                    result.cardWarnings.append("Driver log, \(name) (copied by an earlier run, see its report): \(message)")
+                    return
+                }
+                result.takes[i].problems.append("Driver log: \(message)")
+            } else {
+                result.cardProblems.append("Driver log\(name.map { " (\($0), not copied)" } ?? ""): \(message)")
+            }
+            errors += 1
+        }
         for f in KernelLog.findings(session.lines) {
             switch f.scope {
             case .card:
@@ -528,20 +693,9 @@ final class Offload {
                     errors += 1
                 }
             case .take(let n):
-                let name = "AC\(cardNumber)\(String(format: "%03d", n + 1))"
-                if let i = result.takes.firstIndex(where: { $0.name == name }) {
-                    result.takes[i].problems.append("Driver log: \(f.message)")
-                } else {
-                    result.cardProblems.append("Driver log (take \(n + 1)): \(f.message)")
-                }
-                errors += 1
+                record(f.message, take: "AC\(cardNumber)\(String(format: "%03d", n + 1))")
             case .frame(let n):
-                if let i = takeIndex(ofFrame: n), i < result.takes.count {
-                    result.takes[i].problems.append("Driver log: \(f.message)")
-                } else {
-                    result.cardProblems.append("Driver log: \(f.message)")
-                }
-                errors += 1
+                record(f.message, take: firstFrame.lastIndex { $0 <= n }.map { card.takes[$0].name })
             }
         }
         result.kernelLogSummary = errors == 0 ? "no driver errors" : "\(errors) driver errors (see problems)"

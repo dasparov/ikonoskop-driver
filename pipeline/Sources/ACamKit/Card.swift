@@ -5,6 +5,8 @@ struct FrameFile {
     let name: String
     let url: URL
     let size: Int
+    /// The card file's modification time: when the camera recorded the frame.
+    let modified: Date
 }
 
 struct TakeFolder {
@@ -37,8 +39,9 @@ struct CardVolume {
             var frames: [FrameFile] = []
             for name in try visibleNames(in: takeURL) where name.uppercased().hasSuffix(".DNG") {
                 let fileURL = takeURL.appendingPathComponent(name)
-                let size = try fm.attributesOfItem(atPath: fileURL.path)[.size] as? Int ?? 0
-                frames.append(FrameFile(name: name, url: fileURL, size: size))
+                let attributes = try fm.attributesOfItem(atPath: fileURL.path)
+                frames.append(FrameFile(name: name, url: fileURL, size: attributes[.size] as? Int ?? 0,
+                                        modified: attributes[.modificationDate] as? Date ?? Date(timeIntervalSince1970: 0)))
             }
             takes.append(TakeFolder(name: takeName, url: takeURL, frames: frames))
         }
@@ -61,6 +64,37 @@ struct CardVolume {
     }
 }
 
+/// The camera's COL. TEMP setting (white balance), from the DNG's AsShotNeutral: the driver
+/// writes one of two fixed values (core/ik_dng_templates.h); monochrome sensors have none.
+enum WhiteBalance: String {
+    case tungsten, daylight, monochrome, other
+
+    init(neutral: [Double]?, monochrome: Bool) {
+        func near(_ a: [Double], _ b: [Double]) -> Bool {
+            a.count == 3 && zip(a, b).allSatisfy { abs($0 - $1) < 0.0005 }
+        }
+        if monochrome {
+            self = .monochrome
+        } else if let n = neutral, near(n, [0.8881, 1, 0.4865]) {
+            self = .tungsten
+        } else if let n = neutral, near(n, [0.6350, 1, 0.6554]) {
+            self = .daylight
+        } else {
+            self = .other
+        }
+    }
+
+    /// The camera's own names (user guide v1.26: DAYLIGHT or TUNGSTEN, shown as DL or TS).
+    var label: String {
+        switch self {
+        case .tungsten: return "Tungsten (TS)"
+        case .daylight: return "Daylight (DL)"
+        case .monochrome: return "Monochrome"
+        case .other: return "?"
+        }
+    }
+}
+
 /// Per-frame metadata from a DNG header.
 struct FrameHeader {
     /// FrameRate tag, e.g. 24/1, 2997/100.
@@ -68,6 +102,7 @@ struct FrameHeader {
     let timecode: Timecode?
     let reelName: String?
     let monochrome: Bool
+    let whiteBalance: WhiteBalance
 
     static let headerBytes = 0x1000
 
@@ -81,6 +116,8 @@ struct FrameHeader {
         }
         reelName = tiff.ascii(DNGTag.reelName)
         monochrome = tiff.uint(DNGTag.photometricInterpretation) == 34892
+        whiteBalance = WhiteBalance(neutral: tiff.rationals(DNGTag.asShotNeutral)?.map { Double($0.0) / Double(max($0.1, 1)) },
+                                    monochrome: monochrome)
     }
 
     var fps: Double {

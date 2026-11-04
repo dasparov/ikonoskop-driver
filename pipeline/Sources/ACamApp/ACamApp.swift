@@ -295,8 +295,8 @@ final class CardModel: ObservableObject {
         let frames = rows.reduce(0) { $0 + $1.frames }
         let footage = rows.reduce(Int64(0)) { $0 + $1.bytes }
         let looks = [proresLog ? ProResLook.log : nil, proresPreview ? ProResLook.preview : nil].compactMap { $0 }
-        let written = CardSpace.estimatedRunBytes(frames: frames, frameFileBytes: frames > 0 ? footage / Int64(frames) : 0,
-                                                  audio: audio, clean: clean, looks: looks)
+        let written = footage + CardSpace.estimatedOutputBytes(frames: frames, frameFileBytes: frames > 0 ? footage / Int64(frames) : 0,
+                                                               audio: audio, clean: clean, looks: looks)
         return (footage, written)
     }
 
@@ -741,7 +741,7 @@ struct ContentView: View {
         switch verdict {
         case .allVerified:
             return .green
-        case .partial:
+        case .partial, .stopped:
             return .orange
         case .problems:
             return .red

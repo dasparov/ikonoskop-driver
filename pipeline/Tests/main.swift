@@ -20,4 +20,10 @@ exit(runTests([
     TestSuite(name: "audio", run: audioTests),
     TestSuite(name: "colour-profile", run: colourProfileTests),
     TestSuite(name: "prores", run: proResTests),
+    TestSuite(name: "run-second-copy", run: runSecondCopyTests),
+    TestSuite(name: "run-second-copy-fails", run: runSecondCopyFailsTests),
+    TestSuite(name: "run-space", run: runSpaceTests),
+    TestSuite(name: "run-stop", run: runStopTests),
+    TestSuite(name: "run-add-missing", run: runAddMissingTests),
+    TestSuite(name: "run-details", run: runDetailsTests),
 ]))

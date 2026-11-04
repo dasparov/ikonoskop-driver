@@ -5,17 +5,27 @@ let help = """
     acam \(acamVersion): A-Cam dII card pipeline
 
     Usage:
-      acam offload --source <card> --dest <folder> [--eeprom <file> | --read-eeprom] [--takes <take>,...]
+      acam offload --source <card> --dest <folder> [--second-dest <folder>] [--add]
+                   [--eeprom <file> | --read-eeprom] [--takes <take>,...]
                    [--profile <id>] [--prores log|preview|both] [--no-audio] [--no-clean]
           Copy every take of the mounted card into <folder>/<card name>/<take>/frames/,
           verify every copy with xxHash64 and write an ASC MHL history per take; then, from the
           verified copies, <take>_Audio.wav, clean DNGs in <take>/clean/ and optional ProRes
-          4444 XQ files in <card>/prores/; then REPORT.md.
+          4444 XQ files in <card>/prores/; then REPORT.md. Refuses to start when the
+          destination has too little space for the copies and outputs. Ctrl-C stops: copies not
+          yet verified are removed; once they are, the outputs not made yet are listed.
           The take-table check needs the card's EEPROM:
             --eeprom <file>  a dump made with: sudo tools/ikctl eeprom 0 0x2000 > <file>
             --read-eeprom    run that command now (asks for your password)
           --takes AC102001,AC102004  copy only these takes; the report then says PARTIAL and lists
                                      the takes left on the card
+          --second-dest <folder>     a second copy of everything in <folder>/<card name>, on
+                                     another drive; the frames are written to both as the card is
+                                     read
+          --add                      the card folder exists already (an earlier PARTIAL or stopped
+                                     run): copy only the takes and make only the outputs it lacks.
+                                     Takes it holds are kept as they are; unfinished copies are
+                                     moved to the Trash
 
       acam audio <take folder>...                     <take>_Audio.wav from <take>/frames/
       acam clean [--profile <id>] <take folder>...    clean DNGs in <take>/clean/
@@ -127,8 +137,8 @@ func looks(_ value: String?) throws -> [ProResLook] {
 }
 
 func offload(_ args: ArraySlice<String>) throws -> Int32 {
-    let a = try Arguments(args, values: ["--source", "--dest", "--eeprom", "--profile", "--prores", "--takes"],
-                          flags: ["--read-eeprom", "--no-audio", "--no-clean"])
+    let a = try Arguments(args, values: ["--source", "--dest", "--second-dest", "--eeprom", "--profile", "--prores", "--takes"],
+                          flags: ["--read-eeprom", "--no-audio", "--no-clean", "--add"])
     var eepromText: String?
     if let path = a.value("--eeprom") {
         eepromText = try String(contentsOfFile: path, encoding: .utf8)
@@ -139,10 +149,30 @@ func offload(_ args: ArraySlice<String>) throws -> Int32 {
                                  destination: URL(fileURLWithPath: try a.required("--dest")),
                                  eeprom: try eepromText.map(EepromImage.parseHexDump),
                                  eepromText: eepromText,
-                                 takes: a.value("--takes").map { Set($0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }) })
+                                 takes: a.value("--takes").map { Set($0.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }) },
+                                 secondDestination: a.value("--second-dest").map { URL(fileURLWithPath: $0) },
+                                 addToExisting: a.flag("--add"))
     let options = CardJobOptions(offload: offload, audio: !a.flag("--no-audio"), clean: !a.flag("--no-clean"),
                                  profile: try profile(a.value("--profile")), prores: try looks(a.value("--prores")))
-    let result = try CardJob(options).run()
+    let job = CardJob(options)
+    // The first Ctrl-C stops the run cleanly; a second one quits at once.
+    signal(SIGINT, SIG_IGN)
+    let interrupt = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+    interrupt.setEventHandler {
+        if job.stop.isSet {
+            exit(130)
+        }
+        FileHandle.standardError.write(Data("\nacam: stopping (Ctrl-C again quits at once)…\n".utf8))
+        job.stop.set()
+    }
+    interrupt.resume()
+    let result: CardJobResult
+    do {
+        result = try job.run()
+    } catch is StoppedError {
+        print("\nstopped: the copies were not verified yet, so this run kept nothing; the card still has every take")
+        return 130
+    }
     print("")
     for t in result.offload.takes {
         var extra = [result.audio[t.name].map { $0.failed ? "audio FAILED" : "audio OK" },
@@ -150,10 +180,19 @@ func offload(_ args: ArraySlice<String>) throws -> Int32 {
         for (look, p) in (result.prores[t.name] ?? [:]).sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             extra.append("ProRes \(look.rawValue) \(p.failed ? "FAILED" : "OK")")
         }
+        if t.copiedEarlier {
+            extra.insert("copied earlier", at: 0)
+        }
+        if t.secondFailed {
+            extra.append("second copy FAILED")
+        }
         print("\(t.failed ? "FAILED  " : "verified") \(t.name)  \(t.verifiedCount)/\(t.files.count) frames  \(extra.joined(separator: ", "))")
     }
-    for p in result.problems + result.offload.cardProblems {
+    for p in result.problems + result.offload.cardProblems + (result.second?.problems ?? []) {
         print("problem: \(p)")
+    }
+    for m in result.notMade {
+        print("not made (stopped): \(m)")
     }
     print("\(result.headline): \(result.offload.cardFolder.appendingPathComponent("REPORT.md").path)")
     return result.allVerified ? 0 : 1

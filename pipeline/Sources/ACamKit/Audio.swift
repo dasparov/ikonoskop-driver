@@ -97,8 +97,9 @@ struct AudioResult {
 }
 
 enum AudioTake {
-    /// <take>/<take>_Audio.wav from the verified copies in <take>/frames/.
-    static func run(take folder: URL) throws -> AudioResult {
+    /// <take>/<take>_Audio.wav from the verified copies in <take>/frames/. Stopped, it throws
+    /// StoppedError before writing anything.
+    static func run(take folder: URL, stop: StopSignal? = nil) throws -> AudioResult {
         let fm = FileManager.default
         let take = folder.lastPathComponent
         let out = folder.appendingPathComponent("\(take)_Audio.wav")
@@ -134,6 +135,7 @@ enum AudioTake {
         pcm.reserveCapacity(names.count * high * 4)
         let block = UnsafeMutableRawBufferPointer(rebasing: buffer[0..<CameraAudio.blockBytes])
         for name in names {
+            try stop?.check()
             let path = framesDir.appendingPathComponent(name).path
             guard try FileIO.read(path, at: CameraAudio.blockOffset, into: block) == block.count else {
                 throw TIFFError("\(name) ends before its audio block")

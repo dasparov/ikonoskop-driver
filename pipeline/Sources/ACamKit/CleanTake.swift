@@ -14,7 +14,9 @@ struct CleanResult {
 }
 
 enum CleanTake {
-    static func run(take folder: URL, profile: ColourProfile? = nil, progress: @escaping (String) -> Void) throws -> CleanResult {
+    /// Stopped, it removes clean/ again and throws StoppedError.
+    static func run(take folder: URL, profile: ColourProfile? = nil, stop: StopSignal? = nil,
+                    progress: @escaping (String) -> Void) throws -> CleanResult {
         let fm = FileManager.default
         let framesDir = folder.appendingPathComponent("frames")
         let cleanDir = folder.appendingPathComponent("clean")
@@ -34,6 +36,9 @@ enum CleanTake {
         // stayed in memory until the take was done.
         DispatchQueue.concurrentPerform(iterations: names.count) { i in
             autoreleasepool {
+                if stop?.isSet == true {
+                    return
+                }
                 let name = names[i]
                 let out = cleanDir.appendingPathComponent(name)
                 do {
@@ -67,6 +72,10 @@ enum CleanTake {
                     lock.unlock()
                 }
             }
+        }
+        if stop?.isSet == true {
+            try? fm.removeItem(at: cleanDir)
+            throw StoppedError()
         }
         result.frames = names.count
         if names.isEmpty {

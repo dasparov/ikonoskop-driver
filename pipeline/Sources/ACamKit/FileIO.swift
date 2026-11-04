@@ -122,4 +122,91 @@ enum FileIO {
             throw failure("F_FULLFSYNC", path)
         }
     }
+
+    /// Where `trash` puts things instead of the Trash (tests); nil: the Trash.
+    static var trashFolder: URL?
+
+    /// Moves `url` to the Trash, from where the user can still get it back.
+    static func trash(_ url: URL) throws {
+        guard let folder = trashFolder else {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            return
+        }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: url, to: folder.appendingPathComponent("\(UUID().uuidString)-\(url.lastPathComponent)"))
+    }
+
+    /// Reads all of `path` (F_NOCACHE) through `buffer`, handing each part to `chunk`; returns
+    /// the file's length.
+    @discardableResult
+    static func stream(_ path: String, through buffer: UnsafeMutableRawBufferPointer,
+                       _ chunk: (UnsafeRawBufferPointer) throws -> Void) throws -> Int64 {
+        let fd = open(path, O_RDONLY)
+        guard fd >= 0 else {
+            throw failure("open", path)
+        }
+        defer { close(fd) }
+        _ = fcntl(fd, F_NOCACHE, 1)
+        var total: Int64 = 0
+        while true {
+            let n = Darwin.read(fd, buffer.baseAddress!, buffer.count)
+            if n < 0 {
+                if errno == EINTR {
+                    continue
+                }
+                throw failure("read", path)
+            }
+            if n == 0 {
+                return total
+            }
+            try chunk(UnsafeRawBufferPointer(rebasing: buffer[0..<n]))
+            total += Int64(n)
+        }
+    }
+
+    /// A new file written in parts (F_NOCACHE). `close` must be called; a writer dropped
+    /// without it removes the partly written file.
+    final class Writer {
+        let path: String
+        private var fd: Int32
+
+        /// Creates `path`, which must not exist.
+        init(creating path: String) throws {
+            self.path = path
+            fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+            guard fd >= 0 else {
+                throw FileIO.failure("create", path)
+            }
+            _ = fcntl(fd, F_NOCACHE, 1)
+        }
+
+        func write(_ bytes: UnsafeRawBufferPointer) throws {
+            var done = 0
+            while done < bytes.count {
+                let n = Darwin.write(fd, bytes.baseAddress! + done, bytes.count - done)
+                if n < 0 {
+                    if errno == EINTR {
+                        continue
+                    }
+                    throw FileIO.failure("write", path)
+                }
+                done += n
+            }
+        }
+
+        func close() throws {
+            let result = Darwin.close(fd)
+            fd = -1
+            if result != 0 {
+                throw FileIO.failure("close", path)
+            }
+        }
+
+        deinit {
+            if fd >= 0 {
+                Darwin.close(fd)
+                unlink(path)
+            }
+        }
+    }
 }
