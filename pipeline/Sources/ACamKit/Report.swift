@@ -1,7 +1,7 @@
 // REPORT.md for one offloaded card.
 import Foundation
 
-let acamVersion = "0.2.0"
+let acamVersion = "0.3.0"
 
 enum OffloadReport {
     static func markdown(_ job: CardJobResult) -> String {
@@ -116,6 +116,36 @@ enum OffloadReport {
         md += "\nEach verified take folder holds \(holds.joined(separator: ", ")) and `ascmhl/` (ASC MHL checksum history; "
             + "check the folder later with `acam verify <card folder>`, the app's Verify a copy, or `ascmhl-debug verify <take folder>`).\n"
         md += "\n**\(verdict)**\n"
+        return md
+    }
+
+    /// The section added to the end of REPORT.md when outputs are made later from a copy
+    /// (`acam outputs`, the app's Make outputs from a copy).
+    static func outputsSection(_ r: CopyOutputsResult) -> String {
+        var md = "\n## Outputs made later: \(local(r.started))\n\n"
+        md += "Made from the copies in this folder, without the card, by acam \(acamVersion) in \(duration(r.finished.timeIntervalSince(r.started))). "
+            + "Before anything was made from a take, its frames were checked against its checksum history (all present at their sizes, the first frame's checksum); "
+            + "the clean DNGs checked every frame's checksum and were decoded and compared with the frames.\n\n"
+        md += "| Take | Audio | Clean DNGs | ProRes |\n|---|---|---|---|\n"
+        for take in r.takes where r.audio[take] != nil || r.clean[take] != nil || r.prores[take] != nil {
+            let audio = r.audio[take].map { $0.failed ? "**FAILED**" : String(format: "OK, drift %+.1f ms", $0.drift * 1000) } ?? "–"
+            let clean = r.clean[take].map { $0.failed ? "**FAILED**" : String(format: "OK, %.0f%% of the size", $0.ratio * 100) } ?? "–"
+            let prores = (r.prores[take] ?? [:]).sorted { $0.key.rawValue < $1.key.rawValue }
+                .map { "\($0.key.rawValue) \($0.value.failed ? "**FAILED**" : "OK")" }.joined(separator: ", ")
+            md += "| \(take) | \(audio) | \(clean) | \(prores.isEmpty ? "–" : prores) |\n"
+        }
+        let problems = r.allProblems
+        md += "\n### Problems\n\n" + (problems.isEmpty ? "None.\n" : problems.prefix(200).map { "- \($0)\n" }.joined())
+        var warnings = r.warnings
+        warnings += r.audio.sorted { $0.key < $1.key }.flatMap { k, a in a.warnings.map { "\(k) audio: \($0)" } }
+        warnings += r.prores.sorted { $0.key < $1.key }.flatMap { k, looks in
+            looks.sorted { $0.key.rawValue < $1.key.rawValue }.flatMap { look, p in p.warnings.map { "\(k) ProRes \(look.rawValue): \($0)" } }
+        }
+        if r.stopped {
+            warnings.append("Stopped before everything was made: make the outputs again to finish (what is made is kept).")
+        }
+        md += "\n### Warnings\n\n" + (warnings.isEmpty ? "None.\n" : warnings.map { "- \($0)\n" }.joined())
+        md += "\n**\(r.headline)**\n"
         return md
     }
 

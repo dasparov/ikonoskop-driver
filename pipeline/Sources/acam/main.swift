@@ -44,6 +44,11 @@ let help = """
           xxHash64. A card folder stands for all its takes. Prints ALL MATCH (exit 0) or
           MISMATCH FOUND (exit 1).
 
+      acam outputs [--no-audio] [--no-clean] [--prores log|preview|both] [--profile <id>] <folder>...
+          Make the outputs a copy made by offload still lacks (WAV, clean DNGs, ProRes), from the
+          copies alone: the card is not needed. Takes whose frames no longer match their checksum
+          history are left alone. The run is added to the end of the card folder's REPORT.md.
+
     Options:
       -h, --help   Show this help
       --version    Show the version
@@ -263,6 +268,26 @@ func prores(_ args: ArraySlice<String>) throws -> Int32 {
     return ok ? 0 : 1
 }
 
+func outputs(_ args: ArraySlice<String>) throws -> Int32 {
+    let a = try Arguments(args, values: ["--prores", "--profile"], flags: ["--no-audio", "--no-clean"], positional: true)
+    guard !a.positional.isEmpty else {
+        throw UsageError(description: "name at least one card or take folder")
+    }
+    let options = CopyOutputsOptions(audio: !a.flag("--no-audio"), clean: !a.flag("--no-clean"),
+                                     prores: try looks(a.value("--prores")), profile: try profile(a.value("--profile")))
+    let stop = StopSignal()
+    var ok = true
+    for path in a.positional where !stop.isSet {
+        let r = try interruptible(stop) {
+            try CopyOutputs.make(URL(fileURLWithPath: path), options, stop: stop, progress: { print($0) })
+        }
+        r.lines.forEach { print($0) }
+        print("\(r.headline): \(r.folder.path)")
+        ok = ok && !r.failed && !r.stopped
+    }
+    return ok ? 0 : 1
+}
+
 func verify(_ args: ArraySlice<String>) throws -> Int32 {
     let a = try Arguments(args, values: [], positional: true)
     guard !a.positional.isEmpty else {
@@ -325,6 +350,8 @@ do {
         exit(try prores(arguments.dropFirst()))
     case "verify":
         exit(try verify(arguments.dropFirst()))
+    case "outputs":
+        exit(try outputs(arguments.dropFirst()))
     case nil:
         FileHandle.standardError.write(Data(help.utf8))
         exit(64)

@@ -14,9 +14,10 @@ struct CleanResult {
 }
 
 enum CleanTake {
-    /// Stopped, it removes clean/ again and throws StoppedError.
-    static func run(take folder: URL, profile: ColourProfile? = nil, stop: StopSignal? = nil,
-                    progress: @escaping (String) -> Void) throws -> CleanResult {
+    /// Stopped, it removes clean/ again and throws StoppedError. `frameHashes` (frame name ->
+    /// xxHash64, from the take's checksum history): a frame that no longer matches is not used.
+    static func run(take folder: URL, profile: ColourProfile? = nil, frameHashes: [String: UInt64]? = nil,
+                    stop: StopSignal? = nil, progress: @escaping (String) -> Void) throws -> CleanResult {
         let fm = FileManager.default
         let framesDir = folder.appendingPathComponent("frames")
         let cleanDir = folder.appendingPathComponent("clean")
@@ -43,6 +44,9 @@ enum CleanTake {
                 let out = cleanDir.appendingPathComponent(name)
                 do {
                     let original = try Data(contentsOf: framesDir.appendingPathComponent(name))
+                    if let expected = frameHashes?[name], XXHash64.hash(original) != expected {
+                        throw FileIOError(description: "the copy no longer matches its checksum, so no clean DNG was made from it")
+                    }
                     let made = try CleanDNG.make(fromOriginal: original, profile: profile)
                     try made.dng.withUnsafeBytes { try FileIO.create(out.path, bytes: $0) }
                     FileIO.evictCache(out.path)

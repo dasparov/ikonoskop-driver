@@ -113,8 +113,12 @@ copy, at the destination; the report then says that no second copy was made. See
 
 **Buttons.** **Process card** copies and checks every take on the card. **Process selected takes…** copies only the
 ticked takes; see [Copying only some takes](#copying-only-some-takes). **Verify a copy…** checks a finished copy again;
-see [Checking a copy later](#checking-a-copy-later). While a run is going, these become **Stop**; see
-[Stopping a run](#stopping-a-run).
+see [Checking a copy later](#checking-a-copy-later). **Make outputs from a copy…** makes the ticked outputs for a copy
+made earlier, without the card; see [The first and the second run](#the-first-and-the-second-run). While a run is going,
+these become **Stop**; see [Stopping a run](#stopping-a-run).
+
+**Help.** The **?** button next to List / Grid (or **Help › ACam Help** in the menu bar) opens a short guide: how ACam
+works, how to copy fast, and the first and the second run.
 
 Under the buttons, ACam says what a run will do before it starts: how much footage it copies, about how much it writes
 with the chosen outputs (and to the second drive), and what an earlier run already left at the destination. An orange
@@ -173,11 +177,56 @@ Click **Stop** (or press **⌘.**), and confirm. What happens depends on how far
 - **While copying** (before every copy has been verified): ACam removes what this run copied. Nothing half-checked is
   left behind; the card still has every take. The result says **STOPPED**.
 - **While making the outputs** (WAV, clean DNGs, ProRes, the second copy): the copied takes are verified and stay. The
-  output being made is removed, and the report lists what was not made. Process the card into the same destination
-  again later: ACam makes only what is missing.
+  output being made is removed, and the report lists what was not made. Make them later, with or without the card: see
+  [The first and the second run](#the-first-and-the-second-run).
 
 Quitting ACam or a crash during a run leaves an unfinished folder behind. The next run into the same destination moves
 it to the Trash (from where you can still get it back) and copies the take again.
+
+## Ways of copying
+
+The card reader delivers about 165 MB/s, so any copy of a full 80 GB card takes at least about 8 minutes. What else it
+takes depends on where the copy goes and what ACam makes:
+
+| Way | Full 80 GB card | Checked? |
+|---|---|---|
+| Finder: drag the take folders to an SSD | about 8 min | No |
+| ACam, checked copies only (outputs unticked), to an SSD | about 18–20 min | Yes, every frame |
+| ACam with WAV and clean DNGs, to a USB hard disk | about 1½ hours | Yes |
+
+- **ACam takes a little over twice as long as a plain copy,** because it reads every frame twice from the card and reads
+  each copy back to compare. That is the point: the card sometimes returns a frame slightly differently (on the test card
+  about 1 frame in 6 on a second read). A Finder copy keeps whatever it read the first time, without telling you, and it
+  has no checksum files, so it cannot be checked later.
+- **A USB hard disk is the slow part.** It reads and writes about 50 MB/s, a third of what the card delivers. Copy to the
+  Mac's own disk or to a USB-C or Thunderbolt SSD.
+- **The fastest safe way:** copy to an SSD with the outputs unticked, then make the outputs in a second run (next
+  section).
+- **A second copy** to another fast drive costs almost no extra time: each frame is written to both as it is read.
+
+The hard disk figure comes from the 49 GB test card (copying and checking took 43 minutes, 50 with the WAVs); the SSD
+figures are worked out from the card's speed.
+
+## The first and the second run
+
+**First run, on set (fast):** untick **Audio as WAV**, **Clean DNGs** and both **ProRes** options, and click **Process
+card**. You get the card's folder with the checked copies, their checksum files and the report (ALL VERIFIED). This is
+the part that needs the card.
+
+**Second run, later,** makes the outputs. Tick the ones you want. There are two ways:
+
+| | With the card: **Process card** again | Without the card: **Make outputs from a copy…** |
+|---|---|---|
+| What you do | Put the same card in the reader and click **Process card**, into the same destination | Click **Make outputs from a copy…** and choose the card's folder (on any drive) |
+| What it checks first | Compares each take's first frame with the card, and checks the card's take table again | Checks the copies against their checksum files: every frame present at its size, the first frame's checksum; the clean DNGs check every frame |
+| What it can add | The outputs the copied takes lack, and takes not copied yet | The outputs the copied takes lack |
+| The report | A new REPORT.md for the whole card; the earlier one becomes REPORT-1.md | A section added to the end of REPORT.md |
+| The second copy | Updated too | Run it on that folder as well |
+| Needs | The same card, not recorded over since | Only the copy |
+
+Both make the outputs from the copies on the drive, not from the card, and never change what is already there. The time
+depends on the drive and the Mac: on the Mac's own SSD, the WAV and clean DNGs of a 420-frame take took under 3 seconds.
+If everything is already there, ACam says *nothing to add* or **NOTHING TO MAKE**.
 
 ## A second copy
 
@@ -351,6 +400,7 @@ refused while the card is being copied. Ejecting in Finder works too.
 | "… holds another recording" or "… is not on this card" | The destination already has a folder with this card's name from a different recording. Choose another destination folder |
 | "the second copy must go to another drive" | Choose a second copy folder on a different drive, or click **None** |
 | "nothing to add" | The destination already holds every take with these outputs |
+| NOTHING TO MAKE | The folder already has the ticked outputs for every take. Tick the ones you want, then try again |
 | PROBLEMS FOUND | Read the Problems section of the report, then process the card again |
 | MISMATCH FOUND after Verify a copy | The listed files have changed on that drive. Copy those takes again from your other copy or from the card |
 | The preview says it could not read a frame | The card was probably taken out. Insert it again and reopen the preview |
@@ -367,6 +417,7 @@ pipeline/build/acam offload ... --takes AC102003,AC102007        # only these ta
 pipeline/build/acam offload ... --add                            # add what an earlier run's folder lacks
 pipeline/build/acam offload ... --profile factory                # Ikonoskop's colour instead of the sensor-data profile
 pipeline/build/acam verify "/Volumes/Backup/ACAM 102"            # check a copy against its checksums
+pipeline/build/acam outputs "/Volumes/Backup/ACAM 102"           # make the outputs a copy lacks, without the card
 pipeline/build/acam --help                                       # everything else
 ```
 
@@ -379,3 +430,7 @@ refuses a destination that already has the card's folder.
 - The sizes of the outputs are estimates; a drive that is nearly full can still run out during the ProRes movies.
 - Verify a copy checks the take folders. `REPORT.md`, the ProRes movies and the colour files have no checksums.
 - ACam is not registered with Apple: the first start needs the steps in [Installing ACam](#installing-acam).
+- Make outputs from a copy works on one folder at a time: for a second copy, run it on that folder too (or process the
+  card again, which updates both).
+
+ACam is made by Kapil Das. It is free and open source (MIT licence).

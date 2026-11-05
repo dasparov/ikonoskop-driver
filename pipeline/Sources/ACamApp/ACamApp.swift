@@ -13,6 +13,13 @@ struct ACamApp: App {
             ContentView()
                 .frame(minWidth: 1000, minHeight: 700)
         }
+        .commands {
+            CommandGroup(replacing: .help) { HelpCommand() }
+        }
+        Window("ACam Help", id: "help") {
+            HelpView()
+        }
+        .defaultSize(width: 660, height: 760)
     }
 }
 
@@ -111,7 +118,8 @@ enum Announce {
 
 final class CardModel: ObservableObject {
     enum Activity {
-        case processing, verifying
+        /// A card run; verifying a copy; making the outputs of a copy without the card.
+        case processing, verifying, outputs
     }
 
     @Published var cards: [URL] = []
@@ -193,7 +201,8 @@ final class CardModel: ObservableObject {
 
     private var observers: [NSObjectProtocol] = []
     private var job: CardJob?
-    private var verifyStop: StopSignal?
+    /// Stops Verify a copy and Make outputs from a copy.
+    private var taskStop: StopSignal?
     private var stopRequested = false
     private var started = Date()
     private var planPass = 0
@@ -629,6 +638,67 @@ final class CardModel: ObservableObject {
                        text: (try? String(contentsOf: report, encoding: .utf8)) ?? "", reveal: report)
     }
 
+    /// Makes the ticked outputs that a copy made earlier still lacks, from the copies alone: the
+    /// card is not needed.
+    func makeOutputs() {
+        let looks = [proresLog ? ProResLook.log : nil, proresPreview ? ProResLook.preview : nil].compactMap { $0 }
+        guard audio || clean || !looks.isEmpty else {
+            notice = Notice(title: "No outputs ticked",
+                            message: "Tick the outputs you want under Outputs first: Audio as WAV, Clean DNGs or ProRes.")
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Make outputs"
+        panel.message = "Choose a card folder that ACam made (or one take folder in it). The ticked outputs it lacks are made from the copies; the card is not needed."
+        panel.directoryURL = destination
+        guard panel.runModal() == .OK, let folder = panel.url else {
+            return
+        }
+        var options = CopyOutputsOptions(audio: audio, clean: clean, prores: looks)
+        let profileFolder = Bundle.main.resourceURL?.appendingPathComponent("profiles").appendingPathComponent(profileID)
+        let stop = StopSignal()
+        taskStop = stop
+        activity = .outputs
+        stopRequested = false
+        outcome = nil
+        fraction = 0
+        done = [:]
+        totalUnits = 1
+        started = Date()
+        status = "Making outputs for \(folder.lastPathComponent)…"
+        Announce.prepare()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outcome: Outcome
+            do {
+                options.profile = try profileFolder.map(ColourProfile.load)
+                let units = try CopyOutputs.plan(folder, options).takes.reduce(0.0) { sum, take in
+                    sum + Double(take.frames) * take.missing.reduce(0.0) { w, output in
+                        switch output {
+                        case .audio: return w
+                        case .clean: return w + 0.5
+                        case .prores: return w + 2
+                        }
+                    }
+                }
+                DispatchQueue.main.async { self.totalUnits = max(units, 1) }
+                let r = try CopyOutputs.make(folder, options, stop: stop, progress: { [weak self] line in
+                    DispatchQueue.main.async { self?.progressed(line) }
+                })
+                let report = r.folder.appendingPathComponent("REPORT.md")
+                let text = r.madeAny || r.failed
+                    ? r.lines + ["", "Added to the end of \(report.path)."]
+                    : ["\(r.folder.path) already has these outputs for every take."]
+                outcome = Outcome(headline: r.headline, tone: r.failed ? .bad : r.stopped ? .partial : .good,
+                                  text: text.joined(separator: "\n"), reveal: r.madeAny ? report : r.folder)
+            } catch {
+                outcome = Outcome(headline: "NOT STARTED", tone: .bad, text: "Nothing was made:\n\n\(error)", reveal: nil)
+            }
+            DispatchQueue.main.async { self.finish(outcome, subject: folder.lastPathComponent) }
+        }
+    }
+
     /// Reads a copy that ACam made again and compares every file with its ASC MHL checksums.
     func verifyCopy() {
         let panel = NSOpenPanel()
@@ -647,7 +717,7 @@ final class CardModel: ObservableObject {
             return
         }
         let stop = StopSignal()
-        verifyStop = stop
+        taskStop = stop
         activity = .verifying
         stopRequested = false
         outcome = nil
@@ -677,7 +747,7 @@ final class CardModel: ObservableObject {
     func stop() {
         stopRequested = true
         job?.stop.set()
-        verifyStop?.set()
+        taskStop?.set()
         status = "Stopping…"
     }
 
@@ -721,7 +791,7 @@ final class CardModel: ObservableObject {
         let took = Date().timeIntervalSince(started)
         activity = nil
         job = nil
-        verifyStop = nil
+        taskStop = nil
         self.outcome = outcome
         fraction = outcome.tone == .good ? 1 : fraction
         status = ""
@@ -767,6 +837,7 @@ struct ContentView: View {
     @AppStorage("takeLayout") private var layout = TakeLayout.list
     @State private var confirmingSelection = false
     @State private var confirmingStop = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -831,6 +902,11 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(width: 120)
+            Button { openWindow(id: "help") } label: {
+                Image(systemName: "questionmark.circle").font(.title3)
+            }
+            .buttonStyle(.borderless)
+            .help("ACam Help: how it works, copying fast, the first and the second run")
         }
     }
 
@@ -958,7 +1034,7 @@ struct ContentView: View {
                     Text("Stop").frame(minWidth: 140)
                 }
                 .keyboardShortcut(".", modifiers: .command)
-                .help(model.activity == .verifying ? "Stop checking" : "Stop the run")
+                .help(model.activity == .processing ? "Stop the run" : model.activity == .verifying ? "Stop checking" : "Stop making the outputs")
                 .confirmationDialog(stopTitle, isPresented: $confirmingStop) {
                     Button("Stop", role: .destructive) { model.stop() }
                     Button("Keep going", role: .cancel) {}
@@ -977,6 +1053,8 @@ struct ContentView: View {
                     .help("Copy and check only the ticked takes")
                 Button("Verify a copy…") { model.verifyCopy() }
                     .help("Read a finished copy again and compare every file with its checksums")
+                Button("Make outputs from a copy…") { model.makeOutputs() }
+                    .help("Make the ticked outputs that a copy made earlier still lacks, from the copies alone: the card is not needed")
             }
             ProgressView(value: model.fraction)
             Text(String(format: "%.0f%%", model.fraction * 100)).monospacedDigit().frame(width: 44)
@@ -1037,16 +1115,24 @@ struct ContentView: View {
     }
 
     private var stopTitle: String {
-        model.activity == .verifying ? "Stop checking?" : model.verifiedYet ? "Stop making the outputs?" : "Stop copying?"
+        switch model.activity {
+        case .verifying: return "Stop checking?"
+        case .outputs: return "Stop making the outputs?"
+        default: return model.verifiedYet ? "Stop making the outputs?" : "Stop copying?"
+        }
     }
 
     private var stopMessage: String {
-        if model.activity == .verifying {
+        switch model.activity {
+        case .verifying:
             return "The takes checked so far are listed; the others are not checked."
+        case .outputs:
+            return "The output being made is removed; what is already made stays, and so do the copies. Make the outputs again later to finish."
+        default:
+            return model.verifiedYet
+                ? "The copied takes are verified and stay. The outputs not made yet are listed in the report: process the card into the same destination again to make them."
+                : "The copies are not verified yet, so ACam removes what this run has copied. The card keeps every take: process it again later."
         }
-        return model.verifiedYet
-            ? "The copied takes are verified and stay. The outputs not made yet are listed in the report: process the card into the same destination again to make them."
-            : "The copies are not verified yet, so ACam removes what this run has copied. The card keeps every take: process it again later."
     }
 
     /// A take's first frame, or a grey box of the frame's shape until it is developed.

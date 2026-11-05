@@ -167,6 +167,7 @@ On the command line (build it with `make pipeline`):
 sudo tools/ikctl eeprom 0 0x2000 > eeprom.txt     # the card's take table, checked against the copies
 pipeline/build/acam offload --source "/Volumes/ACAM 000" --dest /Volumes/Backup --eeprom eeprom.txt --prores both
 pipeline/build/acam verify "/Volumes/Backup/ACAM 000"   # check a copy again later against its checksums
+pipeline/build/acam outputs "/Volumes/Backup/ACAM 000"  # make the WAVs and clean DNGs a copy lacks, without the card
 ```
 
 `--profile factory` keeps Ikonoskop's factory colour matrices instead of the sensor-data profile (`pipeline/colour/profiles/`);
@@ -179,8 +180,12 @@ needed), or build it with `make app` and open `pipeline/build/ACam.app`. It show
 and colour temperature setting (as a list or a grid), plays a take with its sound straight from the card before you copy
 it, shows how full the card is and what a run will write, copies the whole card or only the ticked takes to one or two
 drives, adds the rest to the same folder later, can be stopped, says when it is done, checks a copy again later (Verify a
-copy), and ejects the card. The **[ACam user manual](docs/ACam-manual.md)** explains it step by step, including the first
-start of the downloaded app.
+copy), makes the WAVs, clean DNGs and ProRes of a finished copy later without the card (Make outputs from a copy), and
+ejects the card. Its Help window (the **?** button) explains how it works, how to copy fast and the first and second run.
+The **[ACam user manual](docs/ACam-manual.md)** explains it step by step, including the first start of the downloaded
+app, [the ways of copying](docs/ACam-manual.md#ways-of-copying) (a plain Finder copy takes about 8 minutes for a full 80 GB
+card to an SSD but checks nothing; ACam's checked copy takes about 18–20) and
+[the first and the second run](docs/ACam-manual.md#the-first-and-the-second-run).
 
 ## Building and testing
 
@@ -218,4 +223,4 @@ source contains no Ikonoskop code or binaries. The CinemaDNG headers are generat
 driver's byte for byte, including the camera's factory calibration values (colour matrices, black and white levels), so the
 files are the same as those it produced. Ikonoskop and A-Cam are names of their respective owners.
 
-Released under the [MIT License](LICENSE), without warranty.
+By Kapil Das. Released under the [MIT License](LICENSE), without warranty.

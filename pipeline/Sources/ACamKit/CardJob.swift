@@ -149,7 +149,7 @@ final class CardJob {
                 if plan.chosen?.contains(take.name) ?? true {
                     for output in plan.outputs[take.name] ?? [] {
                         try stop.check()
-                        try make(output, take: take.name, folder: folder, result: &result)
+                        try make(output, take: take, folder: folder, result: &result)
                     }
                 }
                 if let second = second, !take.secondFailed {
@@ -169,42 +169,17 @@ final class CardJob {
         return result
     }
 
-    /// Makes one output for a take. An unfinished one an earlier run left goes to the Trash first.
-    private func make(_ output: Output, take: String, folder: URL, result: inout CardJobResult) throws {
-        do {
-            switch output {
-            case .audio:
-                progress("audio  \(take)")
-                try trashLeftover(folder.appendingPathComponent("\(take)_Audio.wav"), result: &result)
-                result.audio[take] = try AudioTake.run(take: folder, stop: stop)
-            case .clean:
-                try trashLeftover(folder.appendingPathComponent("clean"), result: &result)
-                result.clean[take] = try CleanTake.run(take: folder, profile: options.profile?.profile, stop: stop,
-                                                       progress: progress)
-            case .prores(let look):
-                result.prores[take, default: [:]][look] = try ProResTake.run(
-                    take: folder, look: look, outputDir: result.offload.cardFolder.appendingPathComponent("prores"),
-                    stop: stop, progress: progress)
-            }
-        } catch let error as StoppedError {
-            throw error
-        } catch {
-            switch output {
-            case .audio: result.audio[take] = AudioResult(problems: ["\(error)"])
-            case .clean: result.clean[take] = CleanResult(problems: ["\(error)"])
-            case .prores(let look): result.prores[take, default: [:]][look] = ProResResult(problems: ["\(error)"])
-            }
+    /// Makes one output for a take, from its verified copies.
+    private func make(_ output: Output, take: TakeResult, folder: URL, result: inout CardJobResult) throws {
+        let hashes = Dictionary(uniqueKeysWithValues: take.files.compactMap { f in f.copyHash.map { (f.name, $0) } })
+        switch try OutputStep.make(output, take: take.name, folder: folder,
+                                   proresDir: result.offload.cardFolder.appendingPathComponent("prores"),
+                                   profile: options.profile?.profile, frameHashes: hashes, stop: stop,
+                                   progress: progress, warnings: &result.warnings) {
+        case .audio(let a): result.audio[take.name] = a
+        case .clean(let c): result.clean[take.name] = c
+        case .prores(let look, let p): result.prores[take.name, default: [:]][look] = p
         }
-    }
-
-    /// The plan made this output for a take whose history does not list it: whatever is there was
-    /// left by a run that did not finish.
-    private func trashLeftover(_ url: URL, result: inout CardJobResult) throws {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return
-        }
-        try FileIO.trash(url)
-        result.warnings.append("`\(url.path)` was left by a run that did not finish: it was moved to the Trash and made again.")
     }
 
     /// "AC102005: clean DNGs, ProRes Rec709" for every planned output a stopped run did not make.

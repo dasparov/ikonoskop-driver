@@ -270,6 +270,63 @@ func runAddMissingTests(_ t: TestContext) throws {
     t.expect(foreign.contains("AC042009"), "refused: \(foreign)")
 }
 
+func runOutputsFromCopyTests(_ t: TestContext) throws {
+    // Copies only, then the card is gone: the outputs are made from the copies alone.
+    let s = try setUp(t, "outputs")
+    var copiesOnly = s.options
+    copiesOnly.audio = false
+    copiesOnly.clean = false
+    let job = try run(copiesOnly)
+    t.expect(job.verdict == .allVerified, "\(job.headline): \(problems(job))")
+    let folder = job.offload.cardFolder
+    try FileManager.default.removeItem(at: s.dir.appendingPathComponent("card"))
+    let made = try CopyOutputs.make(folder, CopyOutputsOptions(audio: true, clean: true))
+    t.expectEqual(made.headline, "OUTPUTS MADE", "\(made.lines)")
+    t.expectEqual(made.audio.keys.sorted(), ["AC042001", "AC042002", "AC042003"])
+    t.expectEqual(made.clean.keys.sorted(), ["AC042001", "AC042002", "AC042003"])
+    let check = try CopyVerifier.verify(folder)
+    t.expect(check.ok && check.takes.map { $0.files } == [5, 7, 3], "the new files are in the checksum histories: \(check.takes)")
+    let report = try String(contentsOf: folder.appendingPathComponent("REPORT.md"), encoding: .utf8)
+    t.expect(report.contains("**ALL VERIFIED**") && report.contains("## Outputs made later")
+             && report.hasSuffix("**OUTPUTS MADE**\n"), "the run is added to the end of the report:\n\(report)")
+    let before = try contents(folder)
+    let again = try CopyOutputs.make(folder, CopyOutputsOptions(audio: true, clean: true))
+    t.expectEqual(again.headline, "NOTHING TO MAKE")
+    t.expect(try contents(folder) == before, "a second run changes nothing")
+
+    // A frame changed on the drive: that take gets no clean DNGs, the others do.
+    let d = try setUp(t, "outputs-changed")
+    var copies = d.options
+    copies.audio = false
+    copies.clean = false
+    let changed = try run(copies).offload.cardFolder
+    let flip = { (url: URL) in
+        var data = try Data(contentsOf: url)
+        data[9_000] ^= 0x10
+        try data.write(to: url)
+    }
+    try flip(changed.appendingPathComponent("AC042002/frames/04200004.DNG"))
+    let r = try CopyOutputs.make(changed, CopyOutputsOptions(audio: false, clean: true))
+    t.expectEqual(r.headline, "PROBLEMS FOUND")
+    t.expect(r.clean["AC042002"]?.problems.contains { $0.contains("04200004.DNG") && $0.contains("checksum") } == true,
+             "the changed frame is named: \(r.allProblems)")
+    t.expect(r.clean["AC042001"]?.failed == false && r.clean["AC042003"]?.failed == false, "the other takes get clean DNGs")
+    // A changed first frame: nothing is made for that take.
+    try flip(changed.appendingPathComponent("AC042003/frames/04200006.DNG"))
+    let r2 = try CopyOutputs.make(changed, CopyOutputsOptions(audio: true, clean: false))
+    t.expect(r2.audio["AC042003"] == nil && r2.problems.contains { $0.contains("AC042003") && $0.contains("first frame") },
+             "AC042003 is left alone: \(r2.allProblems)")
+    t.expect(r2.audio["AC042001"]?.failed == false, "AC042001 gets its WAV")
+    // Too little room: refused before anything is written.
+    var why = ""
+    do {
+        _ = try CopyOutputs.make(changed, CopyOutputsOptions(audio: false, clean: true), freeSpace: { _ in 1_000 })
+    } catch {
+        why = "\(error)"
+    }
+    t.expect(why.contains("Not enough space"), "refused: \(why)")
+}
+
 func runDetailsTests(_ t: TestContext) throws {
     // The camera's COL. TEMP setting from the header template.
     let tc = Timecode(hours: 1, minutes: 0, seconds: 0, frames: 0)

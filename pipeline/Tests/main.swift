@@ -27,4 +27,5 @@ exit(runTests([
     TestSuite(name: "run-stop", run: runStopTests),
     TestSuite(name: "run-add-missing", run: runAddMissingTests),
     TestSuite(name: "run-details", run: runDetailsTests),
+    TestSuite(name: "outputs-from-copy", run: runOutputsFromCopyTests),
 ]))
