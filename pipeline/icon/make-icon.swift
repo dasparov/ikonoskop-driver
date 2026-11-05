@@ -1,9 +1,11 @@
-// Draws the a-card app icon: the A-Cam dII memory cartridge seen from above and slightly to the
-// front-left, a long hexagon whose connector end has both corners cut off at 45 degrees and slopes
-// down from a crease. Champagne-gold brushed aluminium on top, darker gold sides with the groove
-// between the two halves, the black connector slot in the end face, and "a-card" engraved in large
-// lowercase where the card has its logo. Transparent around it, with a soft drop shadow. Drawn on a
-// 1024 x 1024 canvas, y pointing down; the small lines only from 256 px, the word only from 64 px.
+// Draws the a-card app icon: the A-Cam dII memory card seen from above, as in Ikonoskop's product
+// photos. Black anodised aluminium; the connector end (left, where the arrow points) is square with
+// its back corner cut off, the far end slants outwards towards the front. Bevels run along the back,
+// the far end and the front; the cut corner is a triangular facet, and the sloping nose is a lighter
+// trapezoid behind a diagonal crease. The red write-protect slider sits between its locked and
+// unlocked padlocks. "a-card" is written in the letters of the card's "a-cam" logo, traced from a
+// photo: hollow, outlined in thin white lines. Transparent around it, with a soft drop shadow. Drawn
+// on a 1024 x 1024 canvas, y pointing down; less detail at small sizes, small print from 256 px.
 //
 //   cd pipeline/icon && /Library/Developer/CommandLineTools/usr/bin/swiftc -sdk \
 //     /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk make-icon.swift -o /tmp/make-icon && \
@@ -34,83 +36,51 @@ func polygon(_ points: [CGPoint]) -> CGPath {
 func + (a: CGPoint, b: CGPoint) -> CGPoint { CGPoint(x: a.x + b.x, y: a.y + b.y) }
 func * (a: CGPoint, k: CGFloat) -> CGPoint { CGPoint(x: a.x * k, y: a.y * k) }
 
-/// The cartridge for one icon size: its geometry on the 1024 canvas and how much detail to draw.
-struct Cartridge {
+/// The memory card for one icon size, on the 1024 canvas. The card lies flat and is seen from
+/// straight above, tilted just enough to show its front edge. Plan coordinates: u runs along the
+/// card from the connector end (left) to the far end, w across it from the back edge to the front.
+/// The proportions are measured from a straight-on photo of the card.
+struct Card {
     let pixels: Int
-    /// Device pixels per canvas unit, for shadows, which do not follow the CTM.
+    /// Device pixels per canvas unit, for shadows and hairlines, which do not follow the CTM.
     var scale: CGFloat { CGFloat(pixels) / 1024 }
-    var small: Bool { pixels <= 32 }
+    var tiny: Bool { pixels <= 32 }
 
-    // The top face, length (u) along x and width (w) foreshortened along y; a little larger when tiny.
-    var length: CGFloat { small ? 850 : 770 }
-    var width: CGFloat { small ? 580 : 520 }
-    let squash: CGFloat = 0.82
-    /// How far the two connector-end corners are cut back; larger when tiny, so they still read.
-    var chamfer: CGFloat { width * (small ? 0.32 : 0.25) }
-    /// The thickness on screen: the bottom face is the top face moved down and to the left.
-    var depth: CGPoint { small ? CGPoint(x: -60, y: 72) : CGPoint(x: -58, y: 62) }
-    /// The nose slopes down to the connector: how much of the thickness the end face loses on top.
-    let taper: CGFloat = 0.3
+    /// The length along the front edge; the far end slants, so the card is shorter along the back.
+    let length: CGFloat = 824, backLength: CGFloat = 800, width: CGFloat = 500
+    /// The view's foreshortening across the card, and the front edge's height on screen.
+    let squash: CGFloat = 0.93, thickness: CGFloat = 28
+    /// The back corner at the connector end is cut off: this far along the card, this far across.
+    let cutAlong: CGFloat = 203, cutAcross: CGFloat = 135
+    /// The bevel along the back edge, the narrower ones along the front edge and the far end.
+    var backBevel: CGFloat { width * (tiny ? 0.15 : 0.12) }
+    var frontBevel: CGFloat { width * 0.035 }
+    let endBevel: CGFloat = 12
+    /// The crease between the sloping nose and the flat top runs diagonally, from where the cut
+    /// corner's facet meets the back bevel down and back towards the connector end.
+    let creaseTop = CGPoint(x: 189.5, y: 87), creaseFoot: CGFloat = 108.8
     var origin: CGPoint {
-        let w = length - depth.x, h = width * squash + depth.y
-        return CGPoint(x: (1024 - w) / 2 - depth.x, y: (1024 - h) / 2 - (small ? 8 : 20))
+        CGPoint(x: (1024 - length) / 2, y: (1024 - width * squash - thickness) / 2 - 14)
     }
 
-    /// A point on the top face in (u, w) to the canvas, lowered by `drop` of the thickness, and the
-    /// same point on the bottom face. At 16 and 32 px corners land on whole pixels, for crisp edges.
-    func top(_ u: CGFloat, _ w: CGFloat, drop: CGFloat = 0) -> CGPoint {
-        snap(CGPoint(x: origin.x + u, y: origin.y + w * squash) + depth * drop)
-    }
-    func bottom(_ u: CGFloat, _ w: CGFloat) -> CGPoint { top(u, w, drop: 1) }
-    func snap(_ p: CGPoint) -> CGPoint {
-        guard small else { return p }
-        let unit = 1024 / CGFloat(pixels)
-        return CGPoint(x: (p.x / unit).rounded() * unit, y: (p.y / unit).rounded() * unit)
-    }
+    /// Where the slanting far end is, at a given distance across the card.
+    func end(_ w: CGFloat) -> CGFloat { backLength + (length - backLength) * w / width }
 
-    /// The flat top: far edge, near edge, and the crease where the nose begins.
-    var flat: [CGPoint] { [top(chamfer, 0), top(length, 0), top(length, width), top(chamfer, width)] }
-    /// The sloping nose between the crease and the end face, with the two cut corners.
-    var nose: [CGPoint] {
-        [top(chamfer, 0), top(chamfer, width), top(0, width - chamfer, drop: taper), top(0, chamfer, drop: taper)]
-    }
-    /// The whole outline, clockwise from the far end of the crease.
+    /// The outline seen from above with the front edge below it, clockwise from the cut corner.
     var outline: CGPath {
-        let n = nose, c = chamfer
-        return polygon([n[0], top(length, 0), top(length, width), bottom(length, width), bottom(c, width),
-                        bottom(0, width - c), bottom(0, c), n[3]])
+        let t = thickness / squash
+        return polygon([CGPoint(x: cutAlong, y: 0), CGPoint(x: backLength, y: 0), CGPoint(x: length, y: width),
+                        CGPoint(x: length, y: width + t), CGPoint(x: 0, y: width + t), CGPoint(x: 0, y: cutAcross)])
     }
 }
 
-func shade(_ c: CGContext, _ path: CGPath, _ g: CGGradient, from a: CGPoint, to b: CGPoint) {
+func p(_ u: CGFloat, _ w: CGFloat) -> CGPoint { CGPoint(x: u, y: w) }
+
+func fill(_ c: CGContext, _ path: CGPath, _ g: CGGradient, from a: CGPoint, to b: CGPoint) {
     c.saveGState()
     c.addPath(path)
     c.clip()
     c.drawLinearGradient(g, start: a, end: b, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
-    c.restoreGState()
-}
-
-/// One side face from a to b along the top, down to the bottom face, with the groove between the
-/// cartridge's two halves at a fixed height above the bottom.
-func side(_ c: CGContext, _ k: Cartridge, _ a: CGPoint, _ b: CGPoint, _ a1: CGPoint, _ b1: CGPoint,
-          light: UInt32, dark: UInt32, groove: Bool = true) {
-    let quad = polygon([a, b, b1, a1])
-    shade(c, quad, gradient([(light, 0), (dark, 1)]), from: a, to: a1)
-    guard groove, k.pixels > 16 else { return }
-    c.saveGState()
-    c.addPath(quad)
-    c.clip()
-    let up = k.depth * -0.42, w: CGFloat = k.small ? 0.6 / k.scale : 3.5
-    c.setLineCap(.butt)
-    c.setStrokeColor(colour(0x2a2310, 0.8))
-    c.setLineWidth(w)
-    c.strokeLineSegments(between: [a1 + up, b1 + up])
-    if !k.small {
-        let lip = CGPoint(x: 0, y: w * 0.9)
-        c.setStrokeColor(colour(0xf2e6b8, 0.5))
-        c.setLineWidth(w * 0.6)
-        c.strokeLineSegments(between: [a1 + up + lip, b1 + up + lip])
-    }
     c.restoreGState()
 }
 
@@ -122,132 +92,223 @@ func line(_ text: String, _ font: CTFont, tracking: CGFloat, _ fill: CGColor) ->
     ]))
 }
 
-func advance(_ text: String, font name: String, size: CGFloat, tracking: CGFloat = 0) -> CGFloat {
-    let font = CTFontCreateWithName(name as CFString, size, nil)
-    // The kern after the last glyph is not part of the word's width.
-    return CGFloat(CTLineGetTypographicBounds(line(text, font, tracking: tracking, colour(0)), nil, nil, nil)) - tracking
+/// The width of a line of text, without the kern after its last letter.
+func advance(_ text: String, _ font: CTFont, tracking: CGFloat = 0) -> CGFloat {
+    CGFloat(CTLineGetTypographicBounds(line(text, font, tracking: tracking, colour(0)), nil, nil, nil)) - tracking
 }
 
-/// Text on the flat top with its baseline starting at (u, w), cut into the metal: a dark floor, the
-/// upper wall in shadow, the lower wall catching the light, and a lit rim just below the cut.
-func engrave(_ c: CGContext, _ k: Cartridge, _ text: String, font name: String, size: CGFloat,
-             at u: CGFloat, _ w: CGFloat, tracking: CGFloat = 0) {
-    let font = CTFontCreateWithName(name as CFString, size, nil)
-    let e = max(size * 0.028, 1.6)
+/// White print on the card, its baseline starting at (u, w).
+func print(_ c: CGContext, _ text: String, _ font: CTFont, at u: CGFloat, _ w: CGFloat, tracking: CGFloat = 0) {
     c.saveGState()
-    c.translateBy(x: k.origin.x + u, y: k.origin.y + w * k.squash)
-    c.scaleBy(x: 1, y: -k.squash)
+    c.translateBy(x: u, y: w)
+    c.scaleBy(x: 1, y: -1)
     c.textMatrix = .identity
-    func glyphs(_ dy: CGFloat, _ fill: CGColor, clip: Bool = false) {
-        c.setTextDrawingMode(clip ? .clip : .fill)
-        c.textPosition = CGPoint(x: 0, y: dy)
-        CTLineDraw(line(text, font, tracking: tracking, fill), c)
-    }
-    glyphs(-e * 0.8, colour(0xfff7d8, 0.7))
-    glyphs(0, colour(0), clip: true)
-    c.setFillColor(colour(0x1c1910))
-    c.fill(CGRect(x: -50, y: -size, width: 4000, height: size * 3))
-    glyphs(-e, colour(0x8c8160))
-    glyphs(-e, colour(0), clip: true)
-    glyphs(e * 0.25, colour(0x3c372b))
+    c.textPosition = .zero
+    CTLineDraw(line(text, font, tracking: tracking, colour(0xf1f1ee)), c)
     c.restoreGState()
 }
 
-/// The icon on a 1024 x 1024 canvas, y pointing down: the cartridge, transparent around it.
-func draw(_ c: CGContext, _ k: Cartridge) {
-    let n = k.nose, d = k.depth, L = k.length, W = k.width, ch = k.chamfer
+/// A closed polygon whose corners are cut back by their own amounts: (x, y, cut).
+func chamfered(_ corners: [(CGFloat, CGFloat, CGFloat)], into path: CGMutablePath, _ t: CGAffineTransform) {
+    let n = corners.count
+    for i in 0..<n {
+        let (x, y, cut) = corners[i]
+        let (px, py, _) = corners[(i + n - 1) % n], (nx, ny, _) = corners[(i + 1) % n]
+        func toward(_ ax: CGFloat, _ ay: CGFloat) -> CGPoint {
+            let len = hypot(ax - x, ay - y)
+            return CGPoint(x: x + (ax - x) * cut / len, y: y + (ay - y) * cut / len).applying(t)
+        }
+        let a = toward(px, py), b = toward(nx, ny)
+        if i == 0 { path.move(to: a) } else { path.addLine(to: a) }
+        if cut > 0 { path.addLine(to: b) }
+    }
+    path.closeSubpath()
+}
+
+/// "a-card" in the letters of the card's "a-cam dII" logo, traced from a straight-on photo of the
+/// card in its pixels (x-height 47.9, y down from the top of the letters; 306 wide). a, - and c are
+/// the logo's own; r is the logo's m cut after its first arch, ending like the c's upper arm; d is
+/// the logo's d (bowl on the lower three fifths, stem to the top) drawn at the weight of a-cam.
+func lettering(_ t: CGAffineTransform) -> CGPath {
+    let path = CGMutablePath()
+    let co: CGFloat = 10.5, ci: CGFloat = 3.5, ch: CGFloat = 2.5  // outer, inner and counter corner cuts
+    let y1: CGFloat = 10.1, y2: CGFloat = 19.7, y3: CGFloat = 29.5, y4: CGFloat = 38.7, y5: CGFloat = 47.9
+    for x in [0, 151] as [CGFloat] {                    // a, twice
+        chamfered([(x + 12.3, 0, 0), (x + 57.1, 0, co), (x + 57.1, y5, co), (x, y5, co), (x, y2, co),
+                   (x + 45.9, y2, ci), (x + 45.9, y1, ci), (x + 12.3, y1, 0)], into: path, t)
+        chamfered([(x + 12.3, y3, ch), (x + 45.9, y3, ch), (x + 45.9, y4, ch), (x + 12.3, y4, ch)], into: path, t)
+    }
+    chamfered([(62.8, y2, 1.5), (84.9, y2, 1.5), (84.9, y3, 1.5), (62.8, y3, 1.5)], into: path, t)
+    chamfered([(89.4, 0, co), (146.9, 0, co), (146.9, y2, ci), (135.4, y2, ci), (135.4, y1, ci), (100.9, y1, ci),
+               (100.9, y4, ci), (135.4, y4, ci), (135.4, y3, ci), (146.9, y3, ci), (146.9, y5, co), (89.4, y5, co)],
+              into: path, t)
+    chamfered([(213.1, 0, co), (249.9, 0, co), (249.9, y2, ci), (238.9, y2, ci), (238.9, y1, ci), (224.9, y1, ci),
+               (224.9, y5, 0), (213.1, y5, 0)], into: path, t)
+    chamfered([(294.8, 0, 0), (306, 0, 0), (306, y5, 0), (254.1, y5, co), (254.1, y2, co), (294.8, y2, ci)],
+              into: path, t)
+    chamfered([(266.5, y3, ch), (294.8, y3, ch), (294.8, y4, ch), (266.5, y4, ch)], into: path, t)
+    return path
+}
+
+/// A padlock, white, centred on (u, w) and `size` tall; open with its shackle lifted to one side.
+func padlock(_ c: CGContext, at u: CGFloat, _ w: CGFloat, size: CGFloat, open: Bool) {
+    let bodyW = size * 0.78, bodyH = size * 0.56
+    let body = CGRect(x: u - bodyW / 2, y: w + size / 2 - bodyH, width: bodyW, height: bodyH)
+    c.addPath(CGPath(roundedRect: body, cornerWidth: size * 0.08, cornerHeight: size * 0.08, transform: nil))
+    c.setFillColor(colour(0xf1f1ee))
+    c.fillPath()
+    let r = bodyW * 0.3, stroke = size * 0.13
+    let cx = open ? u + bodyW * 0.42 : u
+    let shackle = CGMutablePath()
+    shackle.move(to: p(cx - r, body.minY + stroke))
+    shackle.addLine(to: p(cx - r, body.minY - size * 0.18))
+    shackle.addArc(center: p(cx, body.minY - size * 0.18), radius: r, startAngle: .pi, endAngle: 0, clockwise: false)
+    shackle.addLine(to: p(cx + r, open ? body.minY - size * 0.12 : body.minY + stroke))
+    c.addPath(shackle)
+    c.setStrokeColor(colour(0xf1f1ee))
+    c.setLineWidth(stroke)
+    c.setLineCap(.butt)
+    c.strokePath()
+}
+
+/// The icon on a 1024 x 1024 canvas, y pointing down: the card, transparent around it.
+func draw(_ c: CGContext, _ k: Card) {
+    let L = k.length, W = k.width, cu = k.cutAlong, cw = k.cutAcross, b = k.backBevel, f = k.frontBevel
+    let t = k.thickness / k.squash, e = k.endBevel, ct = k.creaseTop
+    c.translateBy(x: k.origin.x, y: k.origin.y)
+    c.scaleBy(x: 1, y: k.squash)
 
     // A soft drop shadow, and a tighter one where it rests.
-    for (offset, blur, alpha) in [(30 as CGFloat, 50 as CGFloat, 0.38 as CGFloat), (8, 10, 0.32)] {
+    for (offset, blur, alpha) in [(28 as CGFloat, 48 as CGFloat, 0.42 as CGFloat), (8, 10, 0.35)] {
         c.saveGState()
         c.setShadow(offset: CGSize(width: 0, height: -offset * k.scale), blur: blur * k.scale, color: colour(0x000000, alpha))
         c.addPath(k.outline)
-        c.setFillColor(colour(0x6e6136))
+        c.setFillColor(colour(0x101012))
         c.fillPath()
         c.restoreGState()
     }
 
-    // The sides, in darker gold: the end face with the connector, the cut corner, the long near side.
-    side(c, k, n[3], n[2], k.bottom(0, ch), k.bottom(0, W - ch), light: 0x86784a, dark: 0x5e532f, groove: false)
-    side(c, k, n[2], n[1], k.bottom(0, W - ch), k.bottom(ch, W), light: 0xa09058, dark: 0x766a3e)
-    side(c, k, n[1], k.top(L, W), k.bottom(ch, W), k.bottom(L, W), light: 0xb6a46a, dark: 0x8a7b48)
+    // The front edge: two black halves with the seam between them.
+    let edge = polygon([p(0, W), p(L, W), p(L, W + t), p(0, W + t)])
+    fill(c, edge, gradient([(0x232427, 0), (0x0b0b0c, 1)]), from: p(0, W), to: p(0, W + t))
+    c.setStrokeColor(colour(0x34353a))
+    c.setLineWidth(k.tiny ? 0.6 / k.scale : 2.5)
+    c.strokeLineSegments(between: [p(0, W + t * 0.52), p(L, W + t * 0.52)])
 
-    // The connector slot: a black opening centred in the end face, with the contacts' lip inside.
-    let inset = ch * (k.small ? 0.1 : 0.14)
-    let e0 = n[3] + CGPoint(x: 0, y: inset * k.squash), e1 = n[2] + CGPoint(x: 0, y: -inset * k.squash)
-    let tall = d * (1 - k.taper)
-    let (t0, t1): (CGFloat, CGFloat) = k.small ? (0.22, 0.78) : (0.3, 0.72)
-    let slot = polygon([e0 + tall * t0, e1 + tall * t0, e1 + tall * t1, e0 + tall * t1])
-    c.addPath(slot)
-    c.setFillColor(colour(0x0a0907))
+    // The top: black anodised aluminium, its facets catching the light differently. The bevels
+    // along the back, the far end and the front meet at mitres; the sloping nose is a trapezoid.
+    let backInner = p(k.end(b) - e, b), frontInner = p(k.end(W - f) - e, W - f)
+    let foot = p(k.creaseFoot, W - f), shoulder = p(ct.x + b * 0.49, b)
+    let main = polygon([ct, shoulder, backInner, frontInner, foot])
+    let nose = polygon([p(0, cw), ct, foot, p(0, W - f)])
+    let corner = polygon([p(0, cw), p(cu, 0), ct])
+    let back = polygon([p(cu, 0), p(k.backLength, 0), backInner, shoulder, ct])
+    let far = polygon([p(k.backLength, 0), p(L, W), frontInner, backInner])
+    let front = polygon([p(0, W - f), frontInner, p(L, W), p(0, W)])
+    fill(c, main, gradient([(0x2a2b2e, 0), (0x1c1d1f, 0.55), (0x18191b, 1)]), from: ct, to: p(L, W))
+    fill(c, nose, gradient([(0x505156, 0), (0x3a3b3f, 1)]), from: p(0, cw), to: foot)
+    fill(c, corner, gradient([(0x45464b, 0), (0x2c2d31, 1)]), from: p(0, cw), to: p(cu, 0))
+    fill(c, back, gradient([(0x55565b, 0), (0x3a3b3f, 0.5), (0x2b2c2f, 1)]), from: p(cu, 0), to: p(L, b))
+    fill(c, far, gradient([(0x1a1b1d, 0), (0x111213, 1)]), from: p(k.backLength, 0), to: p(L, W))
+    fill(c, front, gradient([(0x3d3e42, 0), (0x2a2b2e, 1)]), from: p(0, W - f), to: p(L, W))
+    // A broad soft sheen across the flat top.
+    let sheen = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [
+        colour(0xffffff, 0), colour(0xffffff, 0.07), colour(0xffffff, 0)] as CFArray, locations: [0.2, 0.42, 0.64])!
+    fill(c, main, sheen, from: ct, to: p(L, W))
+
+    // Crisp creases between the facets, light where an edge faces the light.
+    c.setLineCap(.round)
+    c.setLineJoin(.round)
+    let hair: CGFloat = k.tiny ? 0.5 / k.scale : 2
+    c.setLineWidth(hair)
+    c.setStrokeColor(colour(0x0c0c0d, 0.8))
+    c.addLines(between: [p(0, cw), ct, shoulder, backInner, frontInner])
+    c.strokePath()
+    c.strokeLineSegments(between: [ct, foot, ct, p(cu, 0)])
+    c.setStrokeColor(colour(0x6e6f74, 0.9))
+    c.strokeLineSegments(between: [p(0, W - f), frontInner])
+
+    // The write-protect switch: a red slider in a black recess, padlocks either side.
+    let su = L * 0.53, sw = W * 0.3
+    let rw = L * (k.tiny ? 0.16 : 0.12), rh = W * (k.tiny ? 0.24 : 0.18)
+    let recess = CGRect(x: su - rw / 2, y: sw - rh / 2, width: rw, height: rh)
+    c.addPath(CGPath(roundedRect: recess, cornerWidth: rh * 0.38, cornerHeight: rh * 0.38, transform: nil))
+    c.setFillColor(colour(0x050506))
     c.fillPath()
-    if !k.small {
-        c.addPath(slot)
-        c.setLineJoin(.round)
-        c.setStrokeColor(colour(0x2b2820))
-        c.setLineWidth(2.5)
+    if !k.tiny {
+        // Its lit lower lip.
+        c.saveGState()
+        c.addPath(CGPath(roundedRect: recess, cornerWidth: rh * 0.38, cornerHeight: rh * 0.38, transform: nil))
+        c.clip()
+        c.addPath(CGPath(roundedRect: recess.offsetBy(dx: 0, dy: -5), cornerWidth: rh * 0.38, cornerHeight: rh * 0.38, transform: nil))
+        c.setStrokeColor(colour(0x5a5b60))
+        c.setLineWidth(6)
         c.strokePath()
-        let mid = (t0 + t1) / 2
-        c.setStrokeColor(colour(0x47443a))
+        c.restoreGState()
+    }
+    let sliderW = rw * 0.46, sliderH = rh * 0.44
+    let slider = CGRect(x: su - sliderW / 2, y: sw - sliderH / 2, width: sliderW, height: sliderH)
+    let sliderPath = CGPath(roundedRect: slider, cornerWidth: sliderH * 0.14, cornerHeight: sliderH * 0.14, transform: nil)
+    fill(c, sliderPath, gradient([(0xff5a4e, 0), (0xe8322b, 0.45), (0xb81f1a, 1)]), from: p(su, slider.minY), to: p(su, slider.maxY))
+    if !k.tiny {
+        c.setStrokeColor(colour(0xff9a90, 0.8))
         c.setLineWidth(2.5)
-        c.strokeLineSegments(between: [e0 + tall * mid + CGPoint(x: 0, y: 12), e1 + tall * mid + CGPoint(x: 0, y: -12)])
+        c.strokeLineSegments(between: [p(slider.minX + 6, slider.minY + 3), p(slider.maxX - 6, slider.minY + 3)])
+    }
+    if k.pixels >= 128 {
+        let lock = W * 0.075
+        padlock(c, at: su - rw / 2 - lock * 0.95, sw + lock * 0.08, size: lock, open: false)
+        padlock(c, at: su + rw / 2 + lock * 0.85, sw + lock * 0.08, size: lock, open: true)
     }
 
-    // The top: champagne gold, lighter to the left and far side, brushed along its length.
-    let flat = polygon(k.flat), nose = polygon(n)
-    shade(c, flat, gradient([(0xf3e9c2, 0), (0xe3d5a3, 0.5), (0xcdbd85, 1)]), from: k.top(ch, 0), to: k.top(L, W))
-    shade(c, nose, gradient([(0xd9c993, 0), (0xc4b37b, 1)]), from: n[0], to: n[2])
-    let sheen = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: [
-        colour(0xffffff, 0), colour(0xffffff, 0.24), colour(0xffffff, 0)] as CFArray, locations: [0.28, 0.45, 0.62])!
-    shade(c, flat, sheen, from: k.top(ch + L * 0.1, 0), to: k.top(L * 0.8, W))
-    if !k.small {
+    // The arrow on the nose, pointing the way the card goes into the camera.
+    if k.pixels >= 64 {
+        let a = W * 0.035, au: CGFloat = 92, aw: CGFloat = 271
+        c.addPath(polygon([p(au - a, aw), p(au + a * 0.8, aw - a), p(au + a * 0.8, aw + a)]))
+        c.setFillColor(colour(0xf1f1ee))
+        c.fillPath()
+    }
+
+    // The name where the card has its logo, in the logo's letters: hollow, outlined in thin white
+    // lines as on the card from 256 px, filled below that, where the lines would be too thin.
+    let left = L * 0.36, right = L * 0.9, baseline = W * 0.625
+    if k.pixels >= 64 {
+        let s = (right - left) / 306
         c.saveGState()
-        c.addPath(flat)
-        c.addPath(nose)
-        c.clip()
-        var seed: UInt64 = 0x2545f4914f6cdd1d
-        func random() -> CGFloat {
-            seed = seed &* 6364136223846793005 &+ 1442695040888963407
-            return CGFloat(seed >> 33) / CGFloat(1 << 31)
-        }
-        for _ in 0..<900 {
-            let w = random() * W, u0 = random() * L - 100, run = 60 + random() * L * 0.7
-            c.setStrokeColor(random() < 0.5 ? colour(0xffffff, 0.04 + random() * 0.08) : colour(0x6b5a28, 0.02 + random() * 0.05))
-            c.setLineWidth(0.5 + random() * 1.1)
-            c.strokeLineSegments(between: [k.top(u0, w), k.top(u0 + run, w)])
+        c.scaleBy(x: 1, y: 1 / k.squash)   // draw the letters in screen proportions, as photographed
+        let letters = lettering(CGAffineTransform(a: s, b: 0, c: 0, d: s, tx: left, ty: baseline * k.squash - 47.9 * s))
+        c.addPath(letters)
+        if k.pixels >= 256 {
+            c.setStrokeColor(colour(0xf1f1ee))
+            c.setLineWidth(3.8 * s)
+            c.setLineJoin(.round)
+            c.strokePath()
+        } else {
+            c.setFillColor(colour(0xf1f1ee))
+            c.fillPath(using: .evenOdd)
         }
         c.restoreGState()
     }
-
-    // The engraving, on the flat top, reading away from the connector as on the real card. The
-    // small lines only where they stay legible; the word alone, a little larger, at 64 and 128 px.
-    if k.pixels >= 64 {
-        let detailed = k.pixels >= 256
-        let big: CGFloat = detailed ? 170 : 186, font = "AvenirNext-DemiBold"
-        let word = advance("a-card", font: font, size: big, tracking: -2)
-        let left = ch + (L - ch - word) / 2 + 6
-        let baseline: CGFloat = detailed ? W * 0.53 : W * 0.6
-        engrave(c, k, "a-card", font: font, size: big, at: left, baseline, tracking: -2)
-        if detailed {
-            let gb = advance("80 GB", font: "AvenirNext-Bold", size: 34, tracking: 1)
-            engrave(c, k, "MEMORY CARTRIDGE", font: "AvenirNext-DemiBold", size: 24, at: left + 8, baseline + 66, tracking: 2.5)
-            engrave(c, k, "80 GB", font: "AvenirNext-Bold", size: 34, at: left + word - gb - 4, baseline + 68, tracking: 1)
-        }
+    if k.pixels >= 256 {
+        // The capacity, boxed as on the card, and a line of small print up to it.
+        let label = CTFontCreateWithName("AvenirNext-DemiBold" as CFString, 25, nil)
+        let gb = advance("80GB", label, tracking: 0.5)
+        let box = CGRect(x: right - gb - 18, y: W * 0.775 - 27, width: gb + 18, height: 34)
+        c.addPath(CGPath(roundedRect: box, cornerWidth: 6, cornerHeight: 6, transform: nil))
+        c.setStrokeColor(colour(0xf1f1ee))
+        c.setLineWidth(2.2)
+        c.strokePath()
+        print(c, "80GB", label, at: box.minX + 9, W * 0.775, tracking: 0.5)
+        let text = "CINEMA DIGITAL NEGATIVE RAW", unit = CTFontCreateWithName("AvenirNext-Medium" as CFString, 10, nil)
+        let fit = 10 * (box.minX - 28 - left) / advance(text, unit, tracking: 0.5)
+        let small = CTFontCreateWithName("AvenirNext-Medium" as CFString, fit, nil)
+        print(c, text, small, at: left + 4, W * 0.775, tracking: fit * 0.05)
     }
 
-    // Crisp edges: the crease, the lit rim where the top turns down, then a fine dark outline.
-    c.setLineJoin(.round)
-    c.setLineCap(.round)
-    c.setStrokeColor(colour(0x8a7a45, 0.7))
-    c.setLineWidth(k.small ? 0.5 / k.scale : 2)
-    c.strokeLineSegments(between: [n[0], n[1]])
-    c.setStrokeColor(colour(0xfff8de, 0.95))
-    c.setLineWidth(k.small ? 0.6 / k.scale : 3)
-    c.addLines(between: [n[3], n[2], n[1], k.top(L, W)])
-    c.strokePath()
-    c.setStrokeColor(colour(0x3a3115, 0.6))
-    c.setLineWidth(k.small ? 0.7 / k.scale : 2.5)
+    // A fine light rim, so the black card holds its shape on a dark background.
     c.addPath(k.outline)
+    c.setStrokeColor(k.tiny ? colour(0xa4a5aa, 0.9) : colour(0x8a8b90, 0.55))
+    c.setLineWidth(k.tiny ? 0.8 / k.scale : 2.5)
     c.strokePath()
 }
 
@@ -257,7 +318,7 @@ func png(size: Int) -> Data {
     c.interpolationQuality = .high
     c.translateBy(x: 0, y: CGFloat(size))
     c.scaleBy(x: CGFloat(size) / 1024, y: -CGFloat(size) / 1024)
-    draw(c, Cartridge(pixels: size))
+    draw(c, Card(pixels: size))
     let out = NSMutableData()
     let dest = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil)!
     CGImageDestinationAddImage(dest, c.makeImage()!, nil)
