@@ -91,7 +91,7 @@ struct CopyOutputsResult {
         failed ? "PROBLEMS FOUND" : stopped ? "STOPPED" : madeAny ? "OUTPUTS MADE" : "NOTHING TO MAKE"
     }
 
-    /// One line per take that got something, then the problems, as `acam outputs` prints them and
+    /// One line per take that got something, then the problems, as `a-card outputs` prints them and
     /// the app shows them.
     var lines: [String] {
         var out: [String] = []
@@ -153,7 +153,7 @@ enum CopyOutputs {
             let history: TakeHistory
             do {
                 guard let h = try TakeHistory.read(url) else {
-                    problems.append("\(name) has no checksum history, so it is not a copy ACam made and checked: nothing made for it")
+                    problems.append("\(name) has no checksum history, so it is not a copy a-card made and checked: nothing made for it")
                     continue
                 }
                 history = h

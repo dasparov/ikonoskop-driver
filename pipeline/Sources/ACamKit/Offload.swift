@@ -184,7 +184,7 @@ final class Offload {
         }
         let reread = copied.reduce(0) { $0 + $1.rereadCount }
         if reread > 0 {
-            result.cardWarnings.append("The card returned different data the second time \(reread) frames were read (random read errors of the card's flash). acam read each of them again until two reads matched exactly and kept that version; any frame where no two reads matched is listed under Problems.")
+            result.cardWarnings.append("The card returned different data the second time \(reread) frames were read (random read errors of the card's flash). a-card read each of them again until two reads matched exactly and kept that version; any frame where no two reads matched is listed under Problems.")
         }
         let totalFrames = takes.reduce(0) { $0 + $1.frames.count }
         if totalFrames > 0 && totalFrames <= 8 {

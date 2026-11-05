@@ -150,7 +150,7 @@ Changes from Ikonoskop's v1.2 besides the Apple silicon port:
 - Copying several files at once (as Finder does) was slow, 26 MB/s in testing, because the driver cached only one frame and
   re-read it from flash for every request. It now caches eight.
 
-## Offloading a card: `acam` and the ACam app
+## Offloading a card: the a-card app and command
 
 `pipeline/` holds a tool that turns a mounted card into verified, ready-to-edit footage. It only reads the card.
 
@@ -165,9 +165,9 @@ On the command line (build it with `make pipeline`):
 
 ```sh
 sudo tools/ikctl eeprom 0 0x2000 > eeprom.txt     # the card's take table, checked against the copies
-pipeline/build/acam offload --source "/Volumes/ACAM 000" --dest /Volumes/Backup --eeprom eeprom.txt --prores both
-pipeline/build/acam verify "/Volumes/Backup/ACAM 000"   # check a copy again later against its checksums
-pipeline/build/acam outputs "/Volumes/Backup/ACAM 000"  # make the WAVs and clean DNGs a copy lacks, without the card
+pipeline/build/a-card offload --source "/Volumes/ACAM 000" --dest /Volumes/Backup --eeprom eeprom.txt --prores both
+pipeline/build/a-card verify "/Volumes/Backup/ACAM 000"   # check a copy again later against its checksums
+pipeline/build/a-card outputs "/Volumes/Backup/ACAM 000"  # make the WAVs and clean DNGs a copy lacks, without the card
 ```
 
 `--profile factory` keeps Ikonoskop's factory colour matrices instead of the sensor-data profile (`pipeline/colour/profiles/`);
@@ -175,17 +175,17 @@ pipeline/build/acam outputs "/Volumes/Backup/ACAM 000"  # make the WAVs and clea
 second copy to another drive; `--add` adds the takes and outputs an earlier run's card folder lacks. A run that will not fit
 with its outputs does not start, the Mac is kept awake while it runs, and Ctrl-C stops it cleanly.
 
-The Mac app does the same with buttons. Download `ACam-<version>.zip` from [Releases](../../releases) (no developer tools
-needed), or build it with `make app` and open `pipeline/build/ACam.app`. It shows each take's first frame, recording date
+The Mac app does the same with buttons. Download `a-card-<version>.zip` from [Releases](../../releases) (no developer tools
+needed), or build it with `make app` and open `pipeline/build/a-card.app`. It shows each take's first frame, recording date
 and colour temperature setting (as a list or a grid), plays a take with its sound straight from the card before you copy
 it, shows how full the card is and what a run will write, copies the whole card or only the ticked takes to one or two
 drives, adds the rest to the same folder later, can be stopped, says when it is done, checks a copy again later (Verify a
 copy), makes the WAVs, clean DNGs and ProRes of a finished copy later without the card (Make outputs from a copy), and
 ejects the card. Its Help window (the **?** button) explains how it works, how to copy fast and the first and second run.
-The **[ACam user manual](docs/ACam-manual.md)** explains it step by step, including the first start of the downloaded
-app, [the ways of copying](docs/ACam-manual.md#ways-of-copying) (a plain Finder copy takes about 8 minutes for a full 80 GB
-card to an SSD but checks nothing; ACam's checked copy takes about 18–20) and
-[the first and the second run](docs/ACam-manual.md#the-first-and-the-second-run).
+The **[a-card user manual](docs/a-card-manual.md)** explains it step by step, including the first start of the downloaded
+app, [the ways of copying](docs/a-card-manual.md#ways-of-copying) (a plain Finder copy takes about 8 minutes for a full 80 GB
+card to an SSD but checks nothing; a-card's checked copy takes about 18–20) and
+[the first and the second run](docs/a-card-manual.md#the-first-and-the-second-run).
 
 ## Building and testing
 
@@ -193,10 +193,10 @@ card to an SSD but checks nothing; ACam's checked copy takes about 18–20) and
 make                 # driver and tools/ikctl
 make check           # tests, then driver checks
 make release         # make check, then dist/IkonoskopCardReader-<version>.zip
-make pipeline        # the acam tool (pipeline/build/acam)
+make pipeline        # the a-card tool (pipeline/build/a-card)
 make pipeline-check  # its tests
-make app             # the ACam Mac app (pipeline/build/ACam.app)
-make app-release     # its tests, then dist/ACam-<version>.zip
+make app             # the a-card Mac app (pipeline/build/a-card.app)
+make app-release     # its tests, then dist/a-card-<version>.zip
 ```
 
 The file system tests create and mount disk images under `/tmp`. The differential test runs Ikonoskop's original x86_64 driver

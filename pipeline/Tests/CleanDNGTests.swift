@@ -40,7 +40,7 @@ func cleanDNGTests(_ t: TestContext) throws {
                      "\(name) tag 0x\(String(e.tag, radix: 16)) unchanged")
         }
 
-        // A camera DNG developed directly (acam prores without clean/) gets the same black level,
+        // A camera DNG developed directly (a-card prores without clean/) gets the same black level,
         // and nothing else in the file changes.
         let patched = try CleanDNG.correctingBlackLevel(ofOriginal: original)
         if kind == 0 {

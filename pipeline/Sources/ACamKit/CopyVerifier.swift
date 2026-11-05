@@ -1,5 +1,5 @@
 // Checks an existing copy, for example after it was moved to another drive, against the ASC MHL
-// history that `acam offload` (and later `acam audio` / `acam clean`) wrote into each take folder:
+// history that `a-card offload` (and later `a-card audio` / `a-card clean`) wrote into each take folder:
 // every manifest must still match its C4 id in the chain, and every file the history lists must
 // still hash to the xxHash64 of the latest generation that lists it.
 import Foundation
@@ -34,7 +34,7 @@ struct CopyVerifyResult {
     }
 
     /// One line per take ("OK      AC102001  2765 files  9.3 GB", or FAILED with the files),
-    /// as `acam verify` prints it and the app shows it.
+    /// as `a-card verify` prints it and the app shows it.
     var lines: [String] {
         var out: [String] = []
         for t in takes {
@@ -66,7 +66,7 @@ enum CopyVerifier {
     static let chunkBytes = 8 << 20
     static let noHistory = "no checksum history (not a verified copy)"
 
-    /// `folder`: a card folder made by `acam offload` (take folders inside) or a single take folder.
+    /// `folder`: a card folder made by `a-card offload` (take folders inside) or a single take folder.
     static func verify(_ folder: URL, progress: @escaping (String) -> Void = { _ in },
                        isCancelled: @escaping () -> Bool = { false }) throws -> CopyVerifyResult {
         let takes = try takeFolders(folder)

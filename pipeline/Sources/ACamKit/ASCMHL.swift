@@ -18,7 +18,7 @@ struct MHLError: Error, CustomStringConvertible {
 }
 
 enum ASCMHL {
-    static let toolName = "acam"
+    static let toolName = "a-card"
 
     /// Writes the next generation for `folder` and adds it to the chain. `process` is "transfer"
     /// for copies, "in-place" for files created in the folder.

@@ -1,4 +1,4 @@
-// acam prores: one take's DNGs to an Apple ProRes 4444 XQ QuickTime movie, with the take's WAV
+// a-card prores: one take's DNGs to an Apple ProRes 4444 XQ QuickTime movie, with the take's WAV
 // and its start timecode.
 //
 // Picture: every DNG (<take>/clean/, or <take>/frames/ when there is no clean/) is developed by

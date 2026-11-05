@@ -12,7 +12,7 @@ approved once in System Settings, needs no restart, and runs with your Mac at Fu
 **The catch: you would lose the `ACAM` disk in Finder.** The current driver pretends to be a disk, and macOS mounts it.
 DriverKit does have disk-driver kits, but they only work when the *hardware itself* copies every byte into the Mac's memory.
 Our driver builds the folders, file tables and DNG headers in software, and DriverKit's disk kits give it no way to write those
-bytes. So a dext can't produce the `ACAM` volume. The practical replacement is: the dext only talks to the reader, and the `acam`
+bytes. So a dext can't produce the `ACAM` volume. The practical replacement is: the dext only talks to the reader, and the `a-card`
 tool (and the Mac app from Phase 6) reads the frames directly and writes the DNG files into your destination folder. You would
 "offload" the card instead of browsing it. A Finder-style mount would still be possible later with Apple's FSKit, but only on
 macOS 26 or newer, and with more work.
@@ -36,7 +36,7 @@ Security setting it needs. If Full Security matters to you, the safe order is:
 
 1. Join the Developer Program and spend about a day on a tiny test dext that only recognises the reader and reads one value
    from it, at Full Security. If that works, the "own Macs" route is proven.
-2. Only then build the real thing as option (a) below (dext plus the `acam` tool and app, no mounted volume), and ask Apple for the
+2. Only then build the real thing as option (a) below (dext plus the `a-card` tool and app, no mounted volume), and ask Apple for the
    distribution permission at the same time, without depending on the answer.
 
 ---
@@ -75,7 +75,7 @@ memory and user-client classes. It runs on Apple silicon and Intel Macs.
 | `requestTerminate`/`willTerminate` (Thunderbolt unplug) | `Stop` (cancel queues, fail pending requests, then call super) ([Stop](https://developer.apple.com/documentation/driverkit/ioservice/stop)) | Direct |
 | Root-only `IOUserClient` with `IOExternalMethodDispatch` | DriverKit `IOUserClient`: `ExternalMethod` with `IOUserClientMethodDispatch` argument checks; large data through `CopyClientMemoryForType`, which can map the frame buffer *read-only* into the client with no copy ([IOUserClient](https://developer.apple.com/documentation/driverkit/iouserclient), [CopyClientMemoryForType](https://developer.apple.com/documentation/driverkit/iouserclient/copyclientmemoryfortype), [sample](https://developer.apple.com/documentation/driverkit/communicating-between-a-driverkit-extension-and-a-client-app)) | Direct. Access control changes from "root only" to "clients with an entitlement" (section 4) |
 | `IOBlockStorageDevice` nub mounted by msdosfs | No workable equivalent (section 3) | **Gap** |
-| `core/` | Builds unchanged in a dext or in the `acam` tool: it only needs `memcpy`/`memset` and `snprintf` and a small hardware interface | Direct |
+| `core/` | Builds unchanged in a dext or in the `a-card` tool: it only needs `memcpy`/`memset` and `snprintf` and a small hardware interface | Direct |
 
 ### Gaps and risks in the mapping
 
@@ -133,14 +133,14 @@ On paper BlockStorageDeviceDriverKit is the match. In practice it doesn't work f
 
 **Conclusion: no DriverKit family lets this driver present the `ACAM` volume.** The alternatives:
 
-| | (a) dext + user client, `acam` writes the files | (b) dext + FSKit file system | (c) dext + local network share |
+| | (a) dext + user client, `a-card` writes the files | (b) dext + FSKit file system | (c) dext + local network share |
 |---|---|---|---|
-| How it works | The dext only reads registers, the EEPROM and frames. `acam` links `core/` (it already builds in user space), rebuilds the exact same DNG files and writes them to the destination | An FSKit module (a user-space file system extension) shows the takes as a read-only volume; it asks the dext for frames | A small server in the app serves the files to macOS's own NFS client on `localhost` (the way fuse-t works) |
+| How it works | The dext only reads registers, the EEPROM and frames. `a-card` links `core/` (it already builds in user space), rebuilds the exact same DNG files and writes them to the destination | An FSKit module (a user-space file system extension) shows the takes as a read-only volume; it asks the dext for frames | A small server in the app serves the files to macOS's own NFS client on `localhost` (the way fuse-t works) |
 | macOS needed | Any version that runs the dext (macOS 12 or later is plenty) | **macOS 26 or later.** FSKit exists from macOS 15.4, but until macOS 26 it only mounts real disks ([FSBlockDeviceResource](https://developer.apple.com/documentation/fskit/fsblockdeviceresource)); a volume that isn't a disk needs [FSGenericURLResource](https://developer.apple.com/documentation/fskit/fsgenericurlresource) (macOS 26) | Any |
 | Finder browsing, other apps reading the card directly | No. Card → offload → folder | Yes, once mounted (`mount -t …` or the app) | Yes, with network-volume quirks |
 | Extra permissions | None beyond the dext's | [`com.apple.developer.fskit.fsmodule`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.fskit.fsmodule); the user turns on the extension in System Settings > General > Login Items & Extensions ([FSKit sample](https://developer.apple.com/documentation/fskit/building-a-passthrough-file-system)). `[INFERENCE]` The sandboxed extension also needs permission to open the dext's user client; not tested | None |
 | Extra work over (a) | n/a | +2 to 4 weeks; speed of a user-space file system at 165 MB/s unknown | +3 to 5 weeks; most fragile |
-| Fit with the pipeline | Best: `acam offload` already verifies and hashes every file; the Phase 6 app becomes the dext's host app | Good | Fair |
+| Fit with the pipeline | Best: `a-card offload` already verifies and hashes every file; the Phase 6 app becomes the dext's host app | Good | Fair |
 
 Option (a) matches how the project is used: SPEC.md's workflow is offload first, then process. It loses the "just browse the card"
 convenience. Because `core/` produces byte-identical files, the existing MHL hashes from a kext-based offload can prove that the dext
@@ -155,14 +155,14 @@ path produces the same footage.
 | [`com.apple.developer.driverkit`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.driverkit) | dext | `true` | Yes |
 | [`com.apple.developer.driverkit.transport.pci`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.driverkit.transport.pci) | dext | Array of match dictionaries, for example `IOPCIPrimaryMatch` = `0x000710EE` (device `0007`, vendor `10EE`). The same keys go in the dext's `IOKitPersonalities` with `IOPCITunnelCompatible` = true | Yes. A forum report says Apple granted a vendor ID only, not vendor plus device ([forum, PCIDriverKit tag](https://developer.apple.com/forums/tags/pcidriverkit)) |
 | [`com.apple.developer.driverkit.userclient-access`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.driverkit.userclient-access) | the app (or tool) that opens the user client | Array with the dext's bundle ID | Yes |
-| *or* [`com.apple.developer.driverkit.allow-any-userclient-access`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.driverkit.allow-any-userclient-access) | dext | `true`: any program may connect. Acceptable for a read-only device, and lets the plain `acam` command-line tool connect without its own provisioning profile | Yes |
+| *or* [`com.apple.developer.driverkit.allow-any-userclient-access`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.driverkit.allow-any-userclient-access) | dext | `true`: any program may connect. Acceptable for a read-only device, and lets the plain `a-card` command-line tool connect without its own provisioning profile | Yes |
 | [`com.apple.developer.system-extension.install`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.system-extension.install) | host app | `true` (Xcode's "System Extension" capability) | No, standard capability |
 | `com.apple.developer.driverkit.family.*` | dext | **None needed** for options (a) and (c). Only a block-storage dext would need [`family.block-storage-device`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.driverkit.family.block-storage-device), which section 3 rules out | n/a |
 | [`com.apple.developer.fskit.fsmodule`](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.fskit.fsmodule) | FSKit extension, option (b) only | `true` | Not stated in Apple's documentation |
 
 A command-line tool can't carry restricted entitlements by itself; it has to live inside an app bundle with a provisioning profile
 ([Signing a daemon with a restricted entitlement](https://developer.apple.com/documentation/xcode/signing-a-daemon-with-a-restricted-entitlement)).
-So with `userclient-access`, `acam` would ship inside the A-Cam app; with `allow-any-userclient-access` on the dext, it can stay a
+So with `userclient-access`, `a-card` would ship inside the A-Cam app; with `allow-any-userclient-access` on the dext, it can stay a
 plain tool.
 
 ### Development versus distribution
@@ -213,7 +213,7 @@ plain tool.
 | Setup: membership, Xcode, project, signing; test dext that matches the reader and reads one register at Full Security | 0.5 | 1.5 |
 | Hardware layer: MMIO, SPI EEPROM, DMA buffer and 32-bit DART mapping, reader DMA table, MSI, 500 ms timeout and abort, unplug, rewritten as event-driven code | 1.5 | 3 |
 | User client (status, EEPROM, frame into a shared read-only buffer, register read) and a Swift wrapper | 0.5 | 1 |
-| `acam` direct-read source: `core/` driven through the user client, `acam offload` reading from it instead of `/Volumes/ACAM…`, kernel-log checks moved to the dext's log | 1 | 2 |
+| `a-card` direct-read source: `core/` driven through the user client, `a-card offload` reading from it instead of `/Volumes/ACAM…`, kernel-log checks moved to the dext's log | 1 | 2 |
 | Host app: install, activate, update, uninstall, approval guidance (folds into the Phase 6 app) | 0.5 | 1 |
 | Hardware testing: byte-for-byte comparison with MHLs from a kext offload, whole-card copies, unplug during copy, sleep, both card sizes if available | 1 | 2 |
 | Distribution: Developer ID signing, notarisation, README | 0.5 | 0.5 |
@@ -248,7 +248,7 @@ the meantime.
 
 **Lose**
 - The `ACAM` volume in Finder (until an FSKit version on macOS 26+). Other apps such as Resolve can't open the card directly; footage
-  goes through `acam offload` or the app first.
+  goes through `a-card offload` or the app first.
 - Independence: a yearly fee, Apple's approval, and Xcode, where the kext needs only the free Command Line Tools.
 - Simplicity: one kext becomes an app, a dext and a user client.
 - Months of work to reach what already works today.

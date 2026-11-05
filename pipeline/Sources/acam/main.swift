@@ -1,13 +1,13 @@
-// acam: command-line entry point.
+// a-card: command-line entry point.
 import Foundation
 
 let help = """
-    acam \(acamVersion): A-Cam dII card pipeline
+    a-card \(acamVersion): A-Cam dII card pipeline
 
     Usage:
-      acam offload --source <card> --dest <folder> [--second-dest <folder>] [--add]
-                   [--eeprom <file> | --read-eeprom] [--takes <take>,...]
-                   [--profile <id>] [--prores log|preview|both] [--no-audio] [--no-clean]
+      a-card offload --source <card> --dest <folder> [--second-dest <folder>] [--add]
+                     [--eeprom <file> | --read-eeprom] [--takes <take>,...]
+                     [--profile <id>] [--prores log|preview|both] [--no-audio] [--no-clean]
           Copy every take of the mounted card into <folder>/<card name>/<take>/frames/,
           verify every copy with xxHash64 and write an ASC MHL history per take; then, from the
           verified copies, <take>_Audio.wav, clean DNGs in <take>/clean/ and optional ProRes
@@ -27,9 +27,9 @@ let help = """
                                      Takes it holds are kept as they are; unfinished copies are
                                      moved to the Trash
 
-      acam audio <take folder>...                     <take>_Audio.wav from <take>/frames/
-      acam clean [--profile <id>] <take folder>...    clean DNGs in <take>/clean/
-      acam prores [--look log|preview|both] <take folder>...
+      a-card audio <take folder>...                   <take>_Audio.wav from <take>/frames/
+      a-card clean [--profile <id>] <take folder>...  clean DNGs in <take>/clean/
+      a-card prores [--look log|preview|both] <take folder>...
                                                       ProRes 4444 XQ in <card>/prores/
           A card folder (made by offload) stands for all its takes.
 
@@ -38,13 +38,13 @@ let help = """
                       or a folder with profile.json.
       log = ACEScct for grading, preview = Rec.709.
 
-      acam verify <folder>...
+      a-card verify <folder>...
           Check a copy made by offload, for example after moving it to another drive: every file
           the take's ASC MHL history (ascmhl/) lists is read again and compared with its
           xxHash64. A card folder stands for all its takes. Prints ALL MATCH (exit 0) or
           MISMATCH FOUND (exit 1).
 
-      acam outputs [--no-audio] [--no-clean] [--prores log|preview|both] [--profile <id>] <folder>...
+      a-card outputs [--no-audio] [--no-clean] [--prores log|preview|both] [--profile <id>] <folder>...
           Make the outputs a copy made by offload still lacks (WAV, clean DNGs, ProRes), from the
           copies alone: the card is not needed. Takes whose frames no longer match their checksum
           history are left alone. The run is added to the end of the card folder's REPORT.md.
@@ -100,7 +100,7 @@ struct Arguments {
     }
 }
 
-/// This checkout's directory `relative` to pipeline/build/, where acam lives.
+/// This checkout's directory `relative` to pipeline/build/, where a-card lives.
 func checkoutPath(_ relative: String) -> URL {
     let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     return exe.deletingLastPathComponent().appendingPathComponent(relative).standardized
@@ -329,7 +329,7 @@ func interruptible<T>(_ stop: StopSignal, _ body: () throws -> T) rethrows -> T 
 }
 
 func fail(_ message: String) -> Never {
-    FileHandle.standardError.write(Data("acam: \(message)\n".utf8))
+    FileHandle.standardError.write(Data("a-card: \(message)\n".utf8))
     exit(64) // EX_USAGE
 }
 
@@ -356,11 +356,11 @@ do {
         FileHandle.standardError.write(Data(help.utf8))
         exit(64)
     case let command?:
-        fail("unknown command '\(command)'. Run 'acam --help'.")
+        fail("unknown command '\(command)'. Run 'a-card --help'.")
     }
 } catch let error as UsageError {
-    fail("\(error). Run 'acam --help'.")
+    fail("\(error). Run 'a-card --help'.")
 } catch {
-    FileHandle.standardError.write(Data("acam: \(error)\n".utf8))
+    FileHandle.standardError.write(Data("a-card: \(error)\n".utf8))
     exit(2)
 }

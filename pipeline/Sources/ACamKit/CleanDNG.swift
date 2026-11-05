@@ -1,9 +1,9 @@
-// acam clean: corrected, losslessly compressed copies of verified frames, in <take>/clean/.
+// a-card clean: corrected, losslessly compressed copies of verified frames, in <take>/clean/.
 //
 // Changes from the camera's DNG: Make and Model added; one WhiteLevel instead of two; valid
 // CalibrationIlluminant codes; BaselineExposure 0; colour frames' BlackLevel corrected; the image
 // tiled and lossless-JPEG compressed (Compression 7, as Adobe DNG Converter writes it); the 8 KiB
-// block after the image (DNGPrivateData, the audio) left out, since `acam audio` exports it to a
+// block after the image (DNGPrivateData, the audio) left out, since `a-card audio` exports it to a
 // WAV. TimeCodes, FrameRate, ReelName, the colour matrices and every other tag are kept as they are.
 import Foundation
 
@@ -40,7 +40,7 @@ enum CleanDNG {
     }
 
     /// A camera DNG with a colour frame's black levels corrected in its header, for developing
-    /// camera DNGs directly (`acam prores` without clean DNGs). Anything else comes back unchanged.
+    /// camera DNGs directly (`a-card prores` without clean DNGs). Anything else comes back unchanged.
     static func correctingBlackLevel(ofOriginal file: Data) throws -> Data {
         let tiff = try TIFFHeader(file.prefix(FrameHeader.headerBytes))
         guard tiff.uint(DNGTag.compression) == 1, tiff.entry(DNGTag.colorMatrix1) != nil,

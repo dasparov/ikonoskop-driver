@@ -1,7 +1,7 @@
 // Stopping a long job, and keeping the Mac awake while it runs.
 import Foundation
 
-/// Set by the app's Stop button or Ctrl-C in `acam`; each step checks it between frames and
+/// Set by the app's Stop button or Ctrl-C in `a-card`; each step checks it between frames and
 /// files, removes what it had not finished and throws StoppedError.
 final class StopSignal {
     private let lock = NSLock()

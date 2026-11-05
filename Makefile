@@ -6,10 +6,10 @@
 #   make install    make check, then install the kext (sudo; restart required)
 #   make uninstall  remove the installed kext (sudo; restart required)
 #   make release    make check, then dist/IkonoskopCardReader-<version>.zip (kext, scripts, docs)
-#   make pipeline        build the acam card tool (pipeline/, Swift) into pipeline/build/acam
-#   make pipeline-check  build and run the acam tests
-#   make app             build the ACam Mac app into pipeline/build/ACam.app
-#   make app-release     its tests, then dist/ACam-<version>.zip (the app, its manual, the licence)
+#   make pipeline        build the a-card command-line tool (pipeline/, Swift) into pipeline/build/a-card
+#   make pipeline-check  build and run its tests
+#   make app             build the a-card Mac app into pipeline/build/a-card.app
+#   make app-release     its tests, then dist/a-card-<version>.zip (the app, its manual, the licence)
 #   make clean
 #
 # Shared compiler settings: mk/common.mk.
@@ -18,7 +18,7 @@ VERSION := $(shell /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' kext/Info
 DIST    := IkonoskopCardReader-$(VERSION)
 # The app's version is acamVersion in pipeline/Sources/ACamKit/Report.swift.
 APP_VERSION := $(shell sed -n 's/^let acamVersion = "\(.*\)"/\1/p' pipeline/Sources/ACamKit/Report.swift)
-APP_DIST    := ACam-$(APP_VERSION)
+APP_DIST    := a-card-$(APP_VERSION)
 
 .PHONY: all check install uninstall release pipeline pipeline-check app app-release clean
 
@@ -55,12 +55,12 @@ app:
 
 app-release: pipeline-check
 	$(MAKE) -C pipeline app
-	@test "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' pipeline/build/ACam.app/Contents/Info.plist)" = "$(APP_VERSION)" \
+	@test "$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' pipeline/build/a-card.app/Contents/Info.plist)" = "$(APP_VERSION)" \
 	  || { echo "pipeline/Sources/ACamApp/Info.plist does not say $(APP_VERSION)"; exit 1; }
 	rm -rf dist/$(APP_DIST) dist/$(APP_DIST).zip
 	mkdir -p dist/$(APP_DIST)
-	ditto pipeline/build/ACam.app dist/$(APP_DIST)/ACam.app
-	cp docs/ACam-manual.md LICENSE dist/$(APP_DIST)/
+	ditto pipeline/build/a-card.app dist/$(APP_DIST)/a-card.app
+	cp docs/a-card-manual.md LICENSE dist/$(APP_DIST)/
 	cd dist && ditto -c -k --keepParent $(APP_DIST) $(APP_DIST).zip
 	@cd dist && shasum -a 256 $(APP_DIST).zip
 

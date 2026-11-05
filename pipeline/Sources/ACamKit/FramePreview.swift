@@ -1,4 +1,4 @@
-// Frame previews for the ACam app: a camera DNG shown as its clean DNG looks in the Rec.709
+// Frame previews for the a-card app: a camera DNG shown as its clean DNG looks in the Rec.709
 // ProRes preview, in the chosen colour profile.
 import CoreImage
 import Foundation

@@ -52,7 +52,7 @@ enum OffloadReport {
             md += "| Earlier runs | \(job.earlierReports.map { "`\($0)`" }.joined(separator: ", ")) |\n"
         }
         md += """
-        | Tool | acam \(acamVersion) |
+        | Tool | a-card \(acamVersion) |
 
         ## Takes
 
@@ -114,16 +114,16 @@ enum OffloadReport {
             holds.append("`clean/` (corrected, compressed DNGs)")
         }
         md += "\nEach verified take folder holds \(holds.joined(separator: ", ")) and `ascmhl/` (ASC MHL checksum history; "
-            + "check the folder later with `acam verify <card folder>`, the app's Verify a copy, or `ascmhl-debug verify <take folder>`).\n"
+            + "check the folder later with `a-card verify <card folder>`, the app's Verify a copy, or `ascmhl-debug verify <take folder>`).\n"
         md += "\n**\(verdict)**\n"
         return md
     }
 
     /// The section added to the end of REPORT.md when outputs are made later from a copy
-    /// (`acam outputs`, the app's Make outputs from a copy).
+    /// (`a-card outputs`, the app's Make outputs from a copy).
     static func outputsSection(_ r: CopyOutputsResult) -> String {
         var md = "\n## Outputs made later: \(local(r.started))\n\n"
-        md += "Made from the copies in this folder, without the card, by acam \(acamVersion) in \(duration(r.finished.timeIntervalSince(r.started))). "
+        md += "Made from the copies in this folder, without the card, by a-card \(acamVersion) in \(duration(r.finished.timeIntervalSince(r.started))). "
             + "Before anything was made from a take, its frames were checked against its checksum history (all present at their sizes, the first frame's checksum); "
             + "the clean DNGs checked every frame's checksum and were decoded and compared with the frames.\n\n"
         md += "| Take | Audio | Clean DNGs | ProRes |\n|---|---|---|---|\n"

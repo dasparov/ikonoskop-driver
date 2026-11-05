@@ -1,6 +1,6 @@
 // One card, start to finish: the run plan (CardPlan: what to copy, whether it fits), the verified
 // offload, the per-take outputs made from the verified copies (audio WAV, clean DNGs, ProRes), the
-// second copy, then EEPROM.txt and REPORT.md. `acam offload` and the Mac app run this.
+// second copy, then EEPROM.txt and REPORT.md. `a-card offload` and the Mac app run this.
 import Foundation
 
 struct CardJobOptions {
@@ -54,7 +54,7 @@ struct CardJobResult {
         !allVerified ? .problems : stopped ? .stopped : offload.notCopied.isEmpty ? .allVerified : .partial
     }
 
-    /// The one-line result in REPORT.md, `acam offload` and the app.
+    /// The one-line result in REPORT.md, `a-card offload` and the app.
     var headline: String {
         let copied = "\(offload.takes.count) of \(offload.takes.count + offload.notCopied.count) takes copied and verified"
         switch verdict {

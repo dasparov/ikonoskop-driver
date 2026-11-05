@@ -146,7 +146,7 @@ struct ExistingCopy {
             }
             var problems: [String] = []
             if XXHash64.hash(copy) != expected {
-                problems.append("The copy of its first frame no longer matches its checksum: check the copy with Verify a copy (`acam verify`).")
+                problems.append("The copy of its first frame no longer matches its checksum: check the copy with Verify a copy (`a-card verify`).")
             }
             let header = UnsafeMutableRawBufferPointer(rebasing: a[0..<FrameHeader.headerBytes])
             let lastLength = try? FileIO.read(frames.appendingPathComponent(last.name).path, at: 0, into: header)
@@ -260,7 +260,7 @@ struct CardPlan {
                 continue
             }
             guard o.addToExisting else {
-                throw FileIOError(description: "\(found.folder.path) already exists; choose a new destination folder, or add the missing takes to it (acam offload --add)")
+                throw FileIOError(description: "\(found.folder.path) already exists; choose a new destination folder, or add the missing takes to it (a-card offload --add)")
             }
             if let why = found.refusal(where: label) {
                 throw FileIOError(description: why)

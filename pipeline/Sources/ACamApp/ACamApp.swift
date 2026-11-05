@@ -1,4 +1,4 @@
-// ACam: a small Mac app over the same CardJob that `acam offload` runs. Pick a mounted card and a
+// a-card: a small Mac app over the same CardJob that `a-card offload` runs. Pick a mounted card and a
 // destination (and, if you like, a second drive for a second copy), choose the outputs, press
 // Process card. Verify a copy reads a finished copy again and compares it with its checksums.
 import AppKit
@@ -9,14 +9,14 @@ import UserNotifications
 @main
 struct ACamApp: App {
     var body: some Scene {
-        WindowGroup("ACam \(acamVersion)") {
+        WindowGroup("a-card \(acamVersion)") {
             ContentView()
                 .frame(minWidth: 1000, minHeight: 700)
         }
         .commands {
             CommandGroup(replacing: .help) { HelpCommand() }
         }
-        Window("ACam Help", id: "help") {
+        Window("a-card Help", id: "help") {
             HelpView()
         }
         .defaultSize(width: 660, height: 760)
@@ -97,7 +97,7 @@ enum PlanState {
 }
 
 /// Tells the user that a long run has finished: a notification, a sound, and the Dock icon
-/// bouncing until ACam is brought to the front.
+/// bouncing until a-card is brought to the front.
 enum Announce {
     /// Asks once for permission to show notifications; macOS remembers the answer.
     static func prepare() {
@@ -232,7 +232,7 @@ final class CardModel: ObservableObject {
                 self?.refreshCards()
             })
         }
-        // Folders may have changed in Finder meanwhile: look again when ACam comes to the front.
+        // Folders may have changed in Finder meanwhile: look again when a-card comes to the front.
         observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
                                                                 object: nil, queue: .main) { [weak self] _ in
             self?.refreshFree()
@@ -287,7 +287,7 @@ final class CardModel: ObservableObject {
         DispatchQueue.global().async {
             guard let card = try? CardVolume.open(url) else {
                 DispatchQueue.main.async {
-                    self.status = "Could not read \(url.lastPathComponent). If macOS asked, allow ACam to access removable volumes."
+                    self.status = "Could not read \(url.lastPathComponent). If macOS asked, allow a-card to access removable volumes."
                 }
                 return
             }
@@ -591,7 +591,7 @@ final class CardModel: ObservableObject {
                     : Outcome(headline: "NOT STARTED", tone: .bad, text: "Nothing was copied:\n\n\(error.error)", reveal: nil)
             } catch is StoppedError {
                 outcome = Outcome(headline: "STOPPED", tone: .partial,
-                                  text: "Stopped before the copies were verified, so ACam kept nothing of this run. The card still has every take: process it again when you are ready.",
+                                  text: "Stopped before the copies were verified, so a-card kept nothing of this run. The card still has every take: process it again when you are ready.",
                                   reveal: nil)
             } catch {
                 outcome = Outcome(headline: "PROBLEMS FOUND", tone: .bad, text: "Could not process the card:\n\n\(error)", reveal: nil)
@@ -651,7 +651,7 @@ final class CardModel: ObservableObject {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.prompt = "Make outputs"
-        panel.message = "Choose a card folder that ACam made (or one take folder in it). The ticked outputs it lacks are made from the copies; the card is not needed."
+        panel.message = "Choose a card folder that a-card made (or one take folder in it). The ticked outputs it lacks are made from the copies; the card is not needed."
         panel.directoryURL = destination
         guard panel.runModal() == .OK, let folder = panel.url else {
             return
@@ -699,13 +699,13 @@ final class CardModel: ObservableObject {
         }
     }
 
-    /// Reads a copy that ACam made again and compares every file with its ASC MHL checksums.
+    /// Reads a copy that a-card made again and compares every file with its ASC MHL checksums.
     func verifyCopy() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.prompt = "Verify"
-        panel.message = "Choose a card folder that ACam made (or one take folder in it). Every file is read again and compared with its checksums."
+        panel.message = "Choose a card folder that a-card made (or one take folder in it). Every file is read again and compared with its checksums."
         panel.directoryURL = destination
         guard panel.runModal() == .OK, let folder = panel.url else {
             return
@@ -906,7 +906,7 @@ struct ContentView: View {
                 Image(systemName: "questionmark.circle").font(.title3)
             }
             .buttonStyle(.borderless)
-            .help("ACam Help: how it works, copying fast, the first and the second run")
+            .help("a-card Help: how it works, copying fast, the first and the second run")
         }
     }
 
@@ -1131,7 +1131,7 @@ struct ContentView: View {
         default:
             return model.verifiedYet
                 ? "The copied takes are verified and stay. The outputs not made yet are listed in the report: process the card into the same destination again to make them."
-                : "The copies are not verified yet, so ACam removes what this run has copied. The card keeps every take: process it again later."
+                : "The copies are not verified yet, so a-card removes what this run has copied. The card keeps every take: process it again later."
         }
     }
 

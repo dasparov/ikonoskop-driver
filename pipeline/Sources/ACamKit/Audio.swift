@@ -187,7 +187,7 @@ enum AudioTake {
         let wav = BroadcastWAV.file(pcm: pcm, channels: 2, sampleRate: CameraAudio.sampleRate, bitsPerSample: 16,
                                     timeReference: reference,
                                     description: "\(take), \(header.reelName ?? take), start \(header.timecode?.description ?? "?")",
-                                    originator: "acam \(acamVersion)", created: Date())
+                                    originator: "a-card \(acamVersion)", created: Date())
         try wav.write(to: out, options: .withoutOverwriting)
         result.wav = out
         result.manifest = try ASCMHL.addGeneration(

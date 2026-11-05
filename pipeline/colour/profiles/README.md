@@ -1,11 +1,11 @@
 # A-Cam dII colour profiles
 
 **In short:** there are three folders, one per colour profile candidate. **`kai02150-ir665` was
-picked (2026-11-04)**: `acam` and the ACam app use it unless told otherwise. Each folder holds
+picked (2026-11-04)**: the a-card app and the `a-card` command use it unless told otherwise. Each folder holds
 everything needed to use its profile:
 
 * in Adobe Camera Raw or Lightroom (the `.dcp` file);
-* in the clean DNG files (`profile.json`, read by the `acam` pipeline);
+* in the clean DNG files (`profile.json`, read by the `a-card` pipeline);
 * in ACES and DaVinci Resolve or other OpenColorIO programs (the `.ctl` files and `config.ocio`).
 
 The folders all have the same layout, so applying a choice means using that folder.
@@ -15,13 +15,13 @@ The scripts regenerate these files; do not edit them by hand.
 |---|---|---|
 | `factory/` | **A** | Ikonoskop's own matrices, as stored in every DNG the camera writes. Matrix 1 is for daylight (D55, 5500 K), matrix 2 for studio tungsten (3200 K). |
 | `kai02150-ir650/` | **B, version 1** | Built from the published sensor curves, assuming an infrared-cut filter at 650 nm. Matrix 1 is for tungsten (Standard A), matrix 2 for daylight (D65). |
-| `kai02150-ir665/` | **B, version 2 (picked)** | The same, with the filter at 665 nm (tuned once; see `work/phase5/findings.md`). The default of `acam` and the app. |
+| `kai02150-ir665/` | **B, version 2 (picked)** | The same, with the filter at 665 nm (tuned once; see `work/phase5/findings.md`). The default of `a-card` and the app. |
 
 ## The files in each folder
 
 | File | What it is for |
 |---|---|
-| `profile.json` | The colour matrices as plain numbers, for the `acam` pipeline to write into the clean DNGs. Each value has 4 decimals; it is stored in the DNG as a fraction over 10000. The two `calibrationIlluminant` numbers are the standard EXIF light codes: 17 = tungsten (Standard A), 20 = D55 daylight, 21 = D65 daylight, 24 = studio tungsten 3200 K. The factory profile has no ForwardMatrix (`null`). |
+| `profile.json` | The colour matrices as plain numbers, for the `a-card` pipeline to write into the clean DNGs. Each value has 4 decimals; it is stored in the DNG as a fraction over 10000. The two `calibrationIlluminant` numbers are the standard EXIF light codes: 17 = tungsten (Standard A), 20 = D55 daylight, 21 = D65 daylight, 24 = studio tungsten 3200 K. The factory profile has no ForwardMatrix (`null`). |
 | `<id>.dcp` | Adobe DNG Camera Profile for Camera Raw and Lightroom. It contains the same numbers as `profile.json`. |
 | `IDT.Ikonoskop.ACamdII.<id>.<light>.ctl` | ACES Input Transform (CTL language), one per light the camera was white-balanced for. **Factory:** `D55` and `3200K`. **Sensor-data profiles:** `A` (tungsten), `D65` and `D55` (daylight). The transform converts camera colours to ACES2065-1. |
 | `idt.json` | The same ACES matrices as plain numbers, with every intermediate step: camera neutral, colour temperature, blend weight, the matrix to XYZ (D50), and the matrix to ACES. |
@@ -65,7 +65,7 @@ white-balanced 1.0 becomes ACES 1.0, so set exposure while grading.
 ## Using the OCIO config in DaVinci Resolve
 
 * **Raw DNG clips in a Resolve colour-managed or ACES project:** Resolve reads the matrices
-  that `acam clean` writes into the clean DNGs. Pick the candidate there; no extra file is
+  that `a-card clean` writes into the clean DNGs. Pick the candidate there; no extra file is
   needed in Resolve.
 * **Footage that is already linear camera RGB** (as described above), and **other OCIO
   programs** such as Nuke, Blender, or the pipeline's own ProRes export: use `config.ocio`.
